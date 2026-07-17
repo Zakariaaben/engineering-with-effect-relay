@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import type { DestinationClient } from "../src/destinationClient.ts"
+import type { DestinationClientService } from "../src/destinationClient.ts"
 import { sendDelivery } from "../src/effectSender.ts"
-import { destination } from "./fixtures.ts"
+import {
+  destination,
+  provideDestinationClient,
+} from "./fixtures.ts"
 import { unsafeParseRelayEvent } from "./incidents/unsafeJsonBoundary.ts"
 
 describe("C02-01 static-type incident", () => {
@@ -15,7 +18,7 @@ describe("C02-01 static-type incident", () => {
     })
     const event = unsafeParseRelayEvent(malformedJson)
     let observedBody: string | undefined
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: ({ body }) => {
         observedBody = body
         return Promise.resolve(202)
@@ -23,7 +26,9 @@ describe("C02-01 static-type incident", () => {
     }
 
     const outcome = await Effect.runPromise(
-      sendDelivery(event, destination, client),
+      sendDelivery(event, destination).pipe(
+        provideDestinationClient(client),
+      ),
     )
 
     expect(outcome._tag).toBe("Delivered")

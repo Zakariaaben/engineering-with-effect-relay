@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import {
   makeFetchDestinationClient,
-  type DestinationClient,
+  type DestinationClientService,
 } from "../src/destinationClient.ts"
 import { sendDeliveryWithPromise } from "../src/promiseSender.ts"
 import {
@@ -14,7 +14,7 @@ describe("Relay M0 Promise baseline", () => {
   it("starts the client when the async function is called", async () => {
     const response = makeGate<number>()
     let starts = 0
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => {
         starts += 1
         return response.promise
@@ -36,7 +36,7 @@ describe("Relay M0 Promise baseline", () => {
 
   it("can reject with an arbitrary JavaScript value", async () => {
     const cause = Symbol("connection reset")
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => Promise.reject(cause),
     }
     const controller = new AbortController()
@@ -53,7 +53,7 @@ describe("Relay M0 Promise baseline", () => {
 
   it("forwards cancellation owned by its caller", async () => {
     const ready = makeGate<AbortSignal>()
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: ({ signal }) => {
         ready.resolve(signal)
         return new Promise<number>((_resolve, reject) => {

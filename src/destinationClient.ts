@@ -1,12 +1,16 @@
+import { Context } from "effect"
 import type { DeliveryRequest } from "./model.ts"
 
-export interface DestinationClient {
+export class DestinationClient extends Context.Service<DestinationClient, {
   readonly post: (
     request: DeliveryRequest & {
       readonly signal: AbortSignal
     },
   ) => Promise<number>
-}
+}>()("Relay/DestinationClient") {}
+
+export type DestinationClientService =
+  Context.Service.Shape<typeof DestinationClient>
 
 interface HttpResponse {
   readonly status: number
@@ -22,7 +26,7 @@ export type Fetch = (
 
 export const makeFetchDestinationClient = (
   fetch: Fetch,
-): DestinationClient => ({
+): DestinationClientService => DestinationClient.of({
   post: async ({ endpoint, authorization, body, signal }) => {
     const response = await fetch(endpoint, {
       method: "POST",

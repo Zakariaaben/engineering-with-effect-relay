@@ -1,9 +1,13 @@
 import { describe, expect, it } from "bun:test"
 import { Cause, Effect, Exit } from "effect"
-import type { DestinationClient } from "../src/destinationClient.ts"
+import type { DestinationClientService } from "../src/destinationClient.ts"
 import { InvalidEventError } from "../src/errors.ts"
 import { deliverCandidate } from "../src/workflow.ts"
-import { destination, event } from "./fixtures.ts"
+import {
+  destination,
+  event,
+  provideDestinationClient,
+} from "./fixtures.ts"
 
 const failureCause = <A, E>(exit: Exit.Exit<A, E>): Cause.Cause<E> => {
   if (Exit.isSuccess(exit)) {
@@ -14,15 +18,14 @@ const failureCause = <A, E>(exit: Exit.Exit<A, E>): Cause.Cause<E> => {
 
 describe("C02-06 Cause and Exit", () => {
   it("keeps typed failure, defect, and interruption distinguishable", async () => {
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => Promise.resolve(202),
     }
     const expectedExit = await Effect.runPromiseExit(
       deliverCandidate(
         { ...event, amountCents: "2500" },
         destination,
-        client,
-      ),
+      ).pipe(provideDestinationClient(client)),
     )
     const defectExit = await Effect.runPromiseExit(
       Effect.sync(() => {

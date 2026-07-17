@@ -15,3 +15,11 @@ export class DeliveryTransportError extends Schema.TaggedErrorClass<DeliveryTran
     cause: Schema.Unknown,
   },
 ) {}
+
+export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRepositoryError>()(
+  "DeliveryRepositoryError",
+  {
+    operation: Schema.Literals(["save", "findById"]),
+    cause: Schema.Unknown,
+  },
+) {}

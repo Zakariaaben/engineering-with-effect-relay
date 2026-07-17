@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { DestinationClient } from "./destinationClient.ts"
+import { DestinationClient } from "./destinationClient.ts"
 import { DeliveryTransportError } from "./errors.ts"
 import {
   classifyDeliveryStatus,
@@ -12,8 +12,8 @@ export const sendDelivery = Effect.fn("Relay.sendDelivery")(
   function* (
     event: RelayEvent,
     destination: Destination,
-    client: DestinationClient,
   ) {
+    const client = yield* DestinationClient
     const request = makeDeliveryRequest(event, destination)
     const status = yield* Effect.tryPromise({
       try: (signal) => client.post({ ...request, signal }),

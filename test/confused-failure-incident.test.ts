@@ -1,24 +1,29 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import type { DestinationClient } from "../src/destinationClient.ts"
+import type { DestinationClientService } from "../src/destinationClient.ts"
 import { deliverCandidate } from "../src/workflow.ts"
-import { destination, event } from "./fixtures.ts"
+import {
+  destination,
+  event,
+  provideDestinationClient,
+} from "./fixtures.ts"
 import { confuseDeliveryFailure } from "./incidents/confusedFailure.ts"
 
 describe("C02-07 confused-failure incident", () => {
   it("makes four different stops look like one provider response", async () => {
-    const acceptedClient: DestinationClient = {
+    const acceptedClient: DestinationClientService = {
       post: () => Promise.resolve(202),
     }
-    const failedClient: DestinationClient = {
+    const failedClient: DestinationClientService = {
       post: () => Promise.reject(new Error("connection reset")),
     }
     const invalid = deliverCandidate(
       { ...event, amountCents: "2500" },
       destination,
-      acceptedClient,
+    ).pipe(provideDestinationClient(acceptedClient))
+    const transport = deliverCandidate(event, destination).pipe(
+      provideDestinationClient(failedClient),
     )
-    const transport = deliverCandidate(event, destination, failedClient)
     const defect = Effect.die(new Error("broken invariant"))
     const interrupted = Effect.interrupt
 
