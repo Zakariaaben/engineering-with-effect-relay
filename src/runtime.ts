@@ -3,7 +3,10 @@ import {
   Effect,
   ManagedRuntime,
 } from "effect"
-import { DeliverySupervisor } from "./deliverySupervisor.ts"
+import {
+  DeliverySupervisor,
+  type DeliveryConcurrencyMetrics,
+} from "./deliverySupervisor.ts"
 import type { Fetch } from "./destinationClient.ts"
 import { makeRelayApplicationLayer } from "./layers.ts"
 import type { DeliveryOutcome } from "./model.ts"
@@ -15,6 +18,7 @@ export type RegisterShutdownHook = (
 export interface RelayApplication {
   readonly deliver: (candidate: unknown) => Promise<DeliveryOutcome>
   readonly activeDeliveryCount: () => Promise<number>
+  readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
   readonly shutdown: () => Promise<void>
 }
 
@@ -30,6 +34,13 @@ const activeDeliveryCount = Effect.fn(
 )(function* () {
   const supervisor = yield* DeliverySupervisor
   return yield* supervisor.activeCount()
+})
+
+const concurrencyMetrics = Effect.fn(
+  "Relay.concurrencyMetrics",
+)(function* () {
+  const supervisor = yield* DeliverySupervisor
+  return yield* supervisor.concurrencyMetrics()
 })
 
 export const startRelayApplication = async (options: {
@@ -65,6 +76,8 @@ export const startRelayApplication = async (options: {
   return {
     activeDeliveryCount: () =>
       runtime.runPromise(activeDeliveryCount()),
+    concurrencyMetrics: () =>
+      runtime.runPromise(concurrencyMetrics()),
     deliver: (candidate) =>
       runtime.runPromise(deliverConfiguredCandidate(candidate)),
     shutdown,

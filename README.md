@@ -41,3 +41,15 @@ bun run validate
 The short [Act 1 design note](docs/act-01-design-note.md) records which pressure
 comes from Relay's domain, Promise semantics, or missing application
 architecture.
+
+## M3 checkpoint
+
+Relay's local engine owns every dynamic delivery fiber and bounds active
+outbound sends with configurable global and per-destination limits. Concurrency
+metrics report active attempts without exposing destination credentials. Scope
+shutdown interrupts both active sends and work waiting for permits, and waits
+for their finalizers before disposal completes.
+
+This remains an in-memory, single-process milestone. It has no durable intake,
+retry policy, crash recovery, untrusted-destination defense, or cross-process
+capacity guarantee.

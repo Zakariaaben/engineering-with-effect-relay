@@ -1,11 +1,17 @@
-import { Config, Context, Layer } from "effect"
+import { Config, Context, Layer, Schema } from "effect"
 import {
   Destination,
   DestinationId,
 } from "./model.ts"
 
+export interface DeliveryConcurrency {
+  readonly global: number
+  readonly perDestination: number
+}
+
 export class AppConfiguration extends Context.Service<AppConfiguration, {
   readonly destination: Destination
+  readonly concurrency: DeliveryConcurrency
 }>()("Relay/AppConfiguration") {}
 
 const destination = Config.all({
@@ -17,11 +23,25 @@ const destination = Config.all({
   authorization: Config.redacted("RELAY_DESTINATION_AUTHORIZATION"),
 })
 
+const ConcurrencyLimit = Schema.Int.check(Schema.isGreaterThan(0))
+
+const concurrency = Config.all({
+  global: Config.schema(
+    ConcurrencyLimit,
+    "RELAY_GLOBAL_CONCURRENCY",
+  ).pipe(Config.withDefault(64)),
+  perDestination: Config.schema(
+    ConcurrencyLimit,
+    "RELAY_DESTINATION_CONCURRENCY",
+  ).pipe(Config.withDefault(4)),
+})
+
 export const AppConfigurationLive = Layer.effect(
   AppConfiguration,
-  destination.pipe(
-    Config.map((destination) =>
+  Config.all({ destination, concurrency }).pipe(
+    Config.map(({ concurrency, destination }) =>
       AppConfiguration.of({
+        concurrency,
         destination: Destination.make(destination),
       })
     ),
