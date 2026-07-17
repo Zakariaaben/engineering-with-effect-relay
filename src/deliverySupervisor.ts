@@ -1,6 +1,7 @@
 import {
   Context,
   Crypto,
+  Duration,
   Effect,
   Fiber,
   FiberSet,
@@ -10,16 +11,19 @@ import {
   SynchronizedRef,
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
+import {
+  observeDeliveryAttempt,
+  runDeliveryWithRetry,
+} from "./deliveryEngine.ts"
 import { DestinationClient } from "./destinationClient.ts"
 import {
   DeliveryIdentityError,
-  type DeliveryTransportError,
   type InvalidEventError,
 } from "./errors.ts"
 import { sendDelivery } from "./effectSender.ts"
 import { generateDeliveryId } from "./identifiers.ts"
 import type {
-  DeliveryOutcome,
+  DeliveryResult,
   Destination,
   DestinationId,
 } from "./model.ts"
@@ -28,7 +32,6 @@ import { decodeIncomingEvent } from "./workflow.ts"
 type DeliveryFailure =
   | InvalidEventError
   | DeliveryIdentityError
-  | DeliveryTransportError
 
 export interface DeliveryConcurrencyMetrics {
   readonly globalActive: number
@@ -38,11 +41,11 @@ export interface DeliveryConcurrencyMetrics {
 export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
   readonly deliver: (
     candidate: unknown,
-  ) => Effect.Effect<DeliveryOutcome, DeliveryFailure>
+  ) => Effect.Effect<DeliveryResult, DeliveryFailure>
   readonly deliverTo: (
     candidate: unknown,
     destination: Destination,
-  ) => Effect.Effect<DeliveryOutcome, DeliveryFailure>
+  ) => Effect.Effect<DeliveryResult, DeliveryFailure>
   readonly activeCount: () => Effect.Effect<number>
   readonly concurrencyMetrics: () => Effect.Effect<DeliveryConcurrencyMetrics>
 }>()("Relay/DeliverySupervisor") {}
@@ -54,7 +57,7 @@ export const DeliverySupervisorLive = Layer.effect(
     const crypto = yield* Crypto.Crypto
     const destinationClient = yield* DestinationClient
     const deliveries = yield* FiberSet.make<
-      DeliveryOutcome,
+      DeliveryResult,
       DeliveryFailure
     >()
     const globalCapacity = yield* Semaphore.make(
@@ -151,19 +154,36 @@ export const DeliverySupervisorLive = Layer.effect(
             })
           ),
         )
-        const task = sendDelivery(
+        const task = runDeliveryWithRetry(
           deliveryId,
-          event,
-          destination,
-        ).pipe(
-          Effect.provideService(
-            DestinationClient,
-            destinationClient,
-          ),
+          destination.id,
+          configuration.resilience,
+          (ordinal, remaining) =>
+            withCapacity(
+              destination.id,
+              observeDeliveryAttempt(
+                ordinal,
+                destination.id,
+                Duration.min(
+                  configuration.resilience.attemptTimeout,
+                  remaining,
+                ),
+                sendDelivery(
+                  deliveryId,
+                  event,
+                  destination,
+                ).pipe(
+                  Effect.provideService(
+                    DestinationClient,
+                    destinationClient,
+                  ),
+                ),
+              ),
+            ),
         )
         const fiber = yield* FiberSet.run(
           deliveries,
-          withCapacity(destination.id, task),
+          task,
         )
 
         return yield* Fiber.join(fiber).pipe(

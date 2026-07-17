@@ -91,19 +91,52 @@ export type DeliveryOutcome = Data.TaggedEnum<{
       | "AmbiguousResponse"
       | "RateLimited"
       | "ProviderFailure"
+    readonly retryAfterMillis?: number
   }
   ProtocolFailure: {
     readonly destinationId: DestinationId
     readonly status: number
   }
+  TransportFailure: {
+    readonly destinationId: DestinationId
+  }
+  TimedOut: {
+    readonly destinationId: DestinationId
+  }
 }>
 
 export const DeliveryOutcome = Data.taggedEnum<DeliveryOutcome>()
 
-export const classifyDeliveryStatus = (
+export interface DeliveryResponseEvidence {
+  readonly status: number
+  readonly retryAfter?: string
+}
+
+export const parseRetryAfterMillis = (
+  value: string | undefined,
+  nowMillis: number,
+): number | undefined => {
+  if (value === undefined) return undefined
+  const trimmed = value.trim()
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed)
+    return Number.isSafeInteger(seconds) &&
+        seconds <= Number.MAX_SAFE_INTEGER / 1_000
+      ? seconds * 1_000
+      : undefined
+  }
+  const timestamp = Date.parse(trimmed)
+  return Number.isFinite(timestamp)
+    ? Math.max(0, timestamp - nowMillis)
+    : undefined
+}
+
+export const classifyDeliveryResponse = (
   destinationId: DestinationId,
-  status: number,
+  response: DeliveryResponseEvidence,
+  nowMillis: number,
 ): DeliveryOutcome => {
+  const { status } = response
   if (status >= 200 && status < 300) {
     return DeliveryOutcome.Delivered({ destinationId, status })
   }
@@ -115,11 +148,22 @@ export const classifyDeliveryStatus = (
     })
   }
   if (status === 429) {
-    return DeliveryOutcome.Retryable({
-      destinationId,
-      status,
-      reason: "RateLimited",
-    })
+    const retryAfterMillis = parseRetryAfterMillis(
+      response.retryAfter,
+      nowMillis,
+    )
+    return retryAfterMillis === undefined
+      ? DeliveryOutcome.Retryable({
+          destinationId,
+          status,
+          reason: "RateLimited",
+        })
+      : DeliveryOutcome.Retryable({
+          destinationId,
+          status,
+          reason: "RateLimited",
+          retryAfterMillis,
+        })
   }
   if (status >= 500 && status < 600) {
     return DeliveryOutcome.Retryable({
@@ -134,6 +178,58 @@ export const classifyDeliveryStatus = (
   return DeliveryOutcome.ProtocolFailure({ destinationId, status })
 }
 
+export const classifyDeliveryStatus = (
+  destinationId: DestinationId,
+  status: number,
+): DeliveryOutcome =>
+  classifyDeliveryResponse(
+    destinationId,
+    { status },
+    0,
+  )
+
+export type DeliveryAttemptDecision = Data.TaggedEnum<{
+  Terminal: {}
+  RetryScheduled: {
+    readonly delayMillis: number
+  }
+  Exhausted: {}
+}>
+
+export const DeliveryAttemptDecision =
+  Data.taggedEnum<DeliveryAttemptDecision>()
+
+export interface DeliveryAttempt {
+  readonly ordinal: number
+  readonly startedAtMillis: number
+  readonly completedAtMillis: number
+  readonly outcome: DeliveryOutcome
+  readonly decision: DeliveryAttemptDecision
+}
+
+interface DeliveryResultFields {
+  readonly deliveryId: DeliveryId
+  readonly destinationId: DestinationId
+  readonly attempts: ReadonlyArray<DeliveryAttempt>
+}
+
+export type DeliveryResult = Data.TaggedEnum<{
+  Delivered: DeliveryResultFields & {
+    readonly status: number
+  }
+  Rejected: DeliveryResultFields & {
+    readonly status: number
+  }
+  ProtocolFailure: DeliveryResultFields & {
+    readonly status: number
+  }
+  Exhausted: DeliveryResultFields & {
+    readonly lastOutcome: DeliveryOutcome
+  }
+}>
+
+export const DeliveryResult = Data.taggedEnum<DeliveryResult>()
+
 export const transitionDeliveryState = (
   current: DeliveryState,
   outcome: DeliveryOutcome,
@@ -147,6 +243,8 @@ export const transitionDeliveryState = (
           DeliveryState.cases.Rejected.make({ status }),
         Retryable: () => current,
         ProtocolFailure: () => current,
+        TransportFailure: () => current,
+        TimedOut: () => current,
       }),
     Delivered: () => current,
     Rejected: () => current,

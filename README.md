@@ -54,15 +54,22 @@ This remains an in-memory, single-process milestone. It has no durable intake,
 retry policy, crash recovery, untrusted-destination defense, or cross-process
 capacity guarantee.
 
-## C05-06 checkpoint
+## M4 checkpoint
 
-Relay now classifies final HTTP statuses before policy acts: successful and
-permanently rejected responses are terminal, while 408, 425, 429, and 5xx
-responses remain eligible for a later bounded retry policy. The outbound
-adapter disables redirects and sends one generated `DeliveryId` as the same
-`Idempotency-Key` for every attempt of a logical delivery.
+Relay now gives every outbound attempt a timeout and classifies its evidence
+before deciding whether to stop or retry. Successful responses and ordinary
+client rejections are terminal. Timeouts, transport failures, 408, 425, 429,
+and 5xx responses may enter a bounded retry schedule with capped exponential
+backoff, full jitter, elapsed-time and attempt limits, and provider
+`Retry-After` evidence.
 
-The key prevents duplicate remote effects only when the destination validates
-and deduplicates it. Relay still has no retry loop at this checkpoint, and it
-does not claim exactly-once delivery. The M4 incident checkpoint will connect
-these outcomes to bounded retry and visible exhaustion.
+Each logical delivery keeps one generated `DeliveryId` as its
+`Idempotency-Key`, and its result carries ordered attempt history plus visible
+exhaustion. Retry sleeps do not occupy outbound concurrency permits; each real
+network attempt must acquire capacity again.
+
+Timeout and transport ambiguity mean a retry can duplicate a remote effect.
+The stable key prevents that duplicate only when the destination validates and
+deduplicates it. Relay therefore does not claim exactly-once delivery. This is
+still an in-memory, single-process checkpoint: retry state and attempt history
+do not survive a crash, and capacity is not coordinated across processes.

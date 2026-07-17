@@ -1,6 +1,6 @@
 import type { DestinationClientService } from "./destinationClient.ts"
 import {
-  classifyDeliveryStatus,
+  classifyDeliveryResponse,
   makeDeliveryRequest,
   type DeliveryId,
   type DeliveryOutcome,
@@ -20,7 +20,14 @@ export const sendDeliveryWithPromise = async (
     event,
     destination,
   )
-  const status = await client.post({ ...request, signal })
+  const evidence = await client.post({ ...request, signal })
+  const response = typeof evidence === "number"
+    ? { status: evidence }
+    : evidence
 
-  return classifyDeliveryStatus(destination.id, status)
+  return classifyDeliveryResponse(
+    destination.id,
+    response,
+    Date.now(),
+  )
 }

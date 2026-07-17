@@ -9,14 +9,14 @@ import {
 } from "./deliverySupervisor.ts"
 import type { Fetch } from "./destinationClient.ts"
 import { makeRelayApplicationLayer } from "./layers.ts"
-import type { DeliveryOutcome } from "./model.ts"
+import type { DeliveryResult } from "./model.ts"
 
 export type RegisterShutdownHook = (
   shutdown: () => Promise<void>,
 ) => () => void
 
 export interface RelayApplication {
-  readonly deliver: (candidate: unknown) => Promise<DeliveryOutcome>
+  readonly deliver: (candidate: unknown) => Promise<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
   readonly shutdown: () => Promise<void>
