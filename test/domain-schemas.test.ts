@@ -15,7 +15,6 @@ describe("C02-02 domain schemas", () => {
   it("constructs trusted records from checked scalar values", () => {
     const event = RelayEvent.make({
       id: EventId.make("evt-42"),
-      type: "invoice.created",
       invoiceId: InvoiceId.make("inv-7"),
       amountCents: AmountCents.make(2_500),
     })
@@ -26,6 +25,7 @@ describe("C02-02 domain schemas", () => {
     })
 
     expect(Number(event.amountCents)).toBe(2_500)
+    expect(event.type).toBe("invoice.created")
     expect(delivery.eventId).toBe(event.id)
   })
 

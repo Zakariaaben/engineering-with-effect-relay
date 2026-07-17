@@ -9,7 +9,6 @@ import {
 
 export const event: RelayEvent = RelayEvent.make({
   id: EventId.make("evt-1"),
-  type: "invoice.created",
   invoiceId: InvoiceId.make("inv-1"),
   amountCents: AmountCents.make(12_500),
 })
