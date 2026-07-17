@@ -1,17 +1,21 @@
-import type {
-  Destination,
+import {
+  AmountCents,
+  DestinationId,
+  EventId,
+  InvoiceId,
   RelayEvent,
+  type Destination,
 } from "../src/model.ts"
 
-export const event: RelayEvent = {
-  id: "evt-1",
+export const event: RelayEvent = RelayEvent.make({
+  id: EventId.make("evt-1"),
   type: "invoice.created",
-  invoiceId: "inv-1",
-  amountCents: 12_500,
-}
+  invoiceId: InvoiceId.make("inv-1"),
+  amountCents: AmountCents.make(12_500),
+})
 
 export const destination: Destination = {
-  id: "dst-1",
+  id: DestinationId.make("dst-1"),
   endpoint: new URL("https://hooks.example.test/invoices"),
   authorization: "test-secret",
 }
