@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 export const EventId = Schema.String.check(
   Schema.isPattern(/^evt-[a-z0-9]+(?:-[a-z0-9]+)*$/),
@@ -29,7 +29,11 @@ export interface RelayEvent extends Schema.Schema.Type<typeof RelayEvent> {}
 
 export const RelayEvent = Schema.Struct({
   id: EventId,
-  type: Schema.Literal("invoice.created"),
+  type: Schema.Literal("invoice.created").pipe(
+    Schema.withConstructorDefault(
+      Effect.succeed("invoice.created"),
+    ),
+  ),
   invoiceId: InvoiceId,
   amountCents: AmountCents,
 })
@@ -43,6 +47,13 @@ export const Delivery = Schema.Struct({
 })
 
 export const decodeRelayEvent = Schema.decodeUnknownEffect(RelayEvent)
+export const RelayEventFromJson = Schema.fromJsonString(RelayEvent)
+export const decodeRelayEventJson = Schema.decodeUnknownEffect(
+  RelayEventFromJson,
+)
+export const encodeRelayEventJson = Schema.encodeEffect(
+  RelayEventFromJson,
+)
 
 export interface Destination {
   readonly id: DestinationId
