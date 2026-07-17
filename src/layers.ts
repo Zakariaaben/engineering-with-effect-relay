@@ -5,6 +5,7 @@ import {
   makeFetchDestinationClient,
   type Fetch,
 } from "./destinationClient.ts"
+import { DeliveryEventsLive } from "./deliveryEvents.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
 import type {
   Delivery,
@@ -58,6 +59,7 @@ export const makeRelayApplicationLayer = (
   )
 
   return DeliverySupervisorLive.pipe(
+    Layer.provideMerge(DeliveryEventsLive),
     Layer.provide(dependencies),
   )
 }

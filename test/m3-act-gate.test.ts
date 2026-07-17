@@ -15,6 +15,7 @@ import {
   DeliverySupervisor,
   DeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
+import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
 import {
   Destination,
@@ -56,7 +57,10 @@ const makeSupervisorRuntime = (
   )
 
   return ManagedRuntime.make(
-    DeliverySupervisorLive.pipe(Layer.provide(dependencies)),
+    DeliverySupervisorLive.pipe(
+      Layer.provide(DeliveryEventsLive),
+      Layer.provide(dependencies),
+    ),
   )
 }
 

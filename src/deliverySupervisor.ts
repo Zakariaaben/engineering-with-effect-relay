@@ -15,6 +15,7 @@ import {
   observeDeliveryAttempt,
   runDeliveryWithRetry,
 } from "./deliveryEngine.ts"
+import { DeliveryEvents } from "./deliveryEvents.ts"
 import { DestinationClient } from "./destinationClient.ts"
 import {
   DeliveryIdentityError,
@@ -56,6 +57,7 @@ export const DeliverySupervisorLive = Layer.effect(
     const configuration = yield* AppConfiguration
     const crypto = yield* Crypto.Crypto
     const destinationClient = yield* DestinationClient
+    const deliveryEvents = yield* DeliveryEvents
     const deliveries = yield* FiberSet.make<
       DeliveryResult,
       DeliveryFailure
@@ -183,7 +185,7 @@ export const DeliverySupervisorLive = Layer.effect(
         )
         const fiber = yield* FiberSet.run(
           deliveries,
-          task,
+          task.pipe(Effect.tap(deliveryEvents.publish)),
         )
 
         return yield* Fiber.join(fiber).pipe(
