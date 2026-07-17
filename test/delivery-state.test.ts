@@ -14,7 +14,12 @@ const delivered = DeliveryOutcome.Delivered({
 })
 const rejected = DeliveryOutcome.Rejected({
   destinationId,
+  status: 400,
+})
+const retryable = DeliveryOutcome.Retryable({
+  destinationId,
   status: 503,
+  reason: "ProviderFailure",
 })
 
 describe("C02-04 delivery state", () => {
@@ -43,11 +48,12 @@ describe("C02-04 delivery state", () => {
   it("implements the complete transition table", () => {
     const pending = DeliveryState.cases.Pending.make({})
     const deliveredState = DeliveryState.cases.Delivered.make({ status: 202 })
-    const rejectedState = DeliveryState.cases.Rejected.make({ status: 503 })
+    const rejectedState = DeliveryState.cases.Rejected.make({ status: 400 })
 
     const cases = [
       [pending, delivered, { _tag: "Delivered", status: 202 }],
-      [pending, rejected, { _tag: "Rejected", status: 503 }],
+      [pending, rejected, { _tag: "Rejected", status: 400 }],
+      [pending, retryable, pending],
       [deliveredState, delivered, deliveredState],
       [deliveredState, rejected, deliveredState],
       [rejectedState, delivered, rejectedState],

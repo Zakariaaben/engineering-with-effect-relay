@@ -84,6 +84,18 @@ export type DeliveryOutcome = Data.TaggedEnum<{
     readonly destinationId: DestinationId
     readonly status: number
   }
+  Retryable: {
+    readonly destinationId: DestinationId
+    readonly status: number
+    readonly reason:
+      | "AmbiguousResponse"
+      | "RateLimited"
+      | "ProviderFailure"
+  }
+  ProtocolFailure: {
+    readonly destinationId: DestinationId
+    readonly status: number
+  }
 }>
 
 export const DeliveryOutcome = Data.taggedEnum<DeliveryOutcome>()
@@ -91,16 +103,36 @@ export const DeliveryOutcome = Data.taggedEnum<DeliveryOutcome>()
 export const classifyDeliveryStatus = (
   destinationId: DestinationId,
   status: number,
-): DeliveryOutcome =>
-  status >= 200 && status < 300
-    ? DeliveryOutcome.Delivered({
-        destinationId,
-        status,
-      })
-    : DeliveryOutcome.Rejected({
-        destinationId,
-        status,
-      })
+): DeliveryOutcome => {
+  if (status >= 200 && status < 300) {
+    return DeliveryOutcome.Delivered({ destinationId, status })
+  }
+  if (status === 408 || status === 425) {
+    return DeliveryOutcome.Retryable({
+      destinationId,
+      status,
+      reason: "AmbiguousResponse",
+    })
+  }
+  if (status === 429) {
+    return DeliveryOutcome.Retryable({
+      destinationId,
+      status,
+      reason: "RateLimited",
+    })
+  }
+  if (status >= 500 && status < 600) {
+    return DeliveryOutcome.Retryable({
+      destinationId,
+      status,
+      reason: "ProviderFailure",
+    })
+  }
+  if (status >= 300 && status < 500) {
+    return DeliveryOutcome.Rejected({ destinationId, status })
+  }
+  return DeliveryOutcome.ProtocolFailure({ destinationId, status })
+}
 
 export const transitionDeliveryState = (
   current: DeliveryState,
@@ -113,21 +145,26 @@ export const transitionDeliveryState = (
           DeliveryState.cases.Delivered.make({ status }),
         Rejected: ({ status }) =>
           DeliveryState.cases.Rejected.make({ status }),
+        Retryable: () => current,
+        ProtocolFailure: () => current,
       }),
     Delivered: () => current,
     Rejected: () => current,
   })
 
 export interface DeliveryRequest {
+  readonly deliveryId: DeliveryId
   readonly endpoint: URL
   readonly authorization: Destination["authorization"]
   readonly body: string
 }
 
 export const makeDeliveryRequest = (
+  deliveryId: DeliveryId,
   event: RelayEvent,
   destination: Destination,
 ): DeliveryRequest => ({
+  deliveryId,
   endpoint: destination.endpoint,
   authorization: destination.authorization,
   body: JSON.stringify(event),

@@ -7,6 +7,7 @@ import {
 } from "../src/errors.ts"
 import { deliverCandidate } from "../src/workflow.ts"
 import {
+  delivery,
   destination,
   event,
   provideDestinationClient,
@@ -24,6 +25,7 @@ describe("C02-05 expected failures", () => {
 
     const failure = await Effect.runPromise(
       deliverCandidate(
+        delivery.id,
         { ...event, amountCents: "2500" },
         destination,
       ).pipe(
@@ -48,7 +50,7 @@ describe("C02-05 expected failures", () => {
     }
 
     const failure = await Effect.runPromise(
-      deliverCandidate(event, destination).pipe(
+      deliverCandidate(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
         Effect.flip,
       ),
@@ -56,6 +58,7 @@ describe("C02-05 expected failures", () => {
 
     expect(failure).toEqual(
       new DeliveryTransportError({
+        deliveryId: delivery.id,
         destinationId: destination.id,
         cause,
       }),
@@ -64,11 +67,11 @@ describe("C02-05 expected failures", () => {
 
   it("keeps an observed provider rejection in the success value", async () => {
     const client: DestinationClientService = {
-      post: () => Promise.resolve(503),
+      post: () => Promise.resolve(400),
     }
 
     const outcome = await Effect.runPromise(
-      deliverCandidate(event, destination).pipe(
+      deliverCandidate(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
     )
@@ -76,7 +79,7 @@ describe("C02-05 expected failures", () => {
     expect(outcome).toEqual({
       _tag: "Rejected",
       destinationId: destination.id,
-      status: 503,
+      status: 400,
     })
   })
 })

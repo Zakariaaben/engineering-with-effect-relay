@@ -4,6 +4,7 @@ import type { DestinationClientService } from "../src/destinationClient.ts"
 import { InvalidEventError } from "../src/errors.ts"
 import { deliverCandidate } from "../src/workflow.ts"
 import {
+  delivery,
   destination,
   event,
   provideDestinationClient,
@@ -23,6 +24,7 @@ describe("C02-06 Cause and Exit", () => {
     }
     const expectedExit = await Effect.runPromiseExit(
       deliverCandidate(
+        delivery.id,
         { ...event, amountCents: "2500" },
         destination,
       ).pipe(provideDestinationClient(client)),

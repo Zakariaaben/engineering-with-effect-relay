@@ -1,5 +1,6 @@
 import {
   Context,
+  Crypto,
   Effect,
   Fiber,
   FiberSet,
@@ -10,11 +11,13 @@ import {
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
 import { DestinationClient } from "./destinationClient.ts"
-import type {
-  DeliveryTransportError,
-  InvalidEventError,
+import {
+  DeliveryIdentityError,
+  type DeliveryTransportError,
+  type InvalidEventError,
 } from "./errors.ts"
 import { sendDelivery } from "./effectSender.ts"
+import { generateDeliveryId } from "./identifiers.ts"
 import type {
   DeliveryOutcome,
   Destination,
@@ -22,7 +25,10 @@ import type {
 } from "./model.ts"
 import { decodeIncomingEvent } from "./workflow.ts"
 
-type DeliveryFailure = InvalidEventError | DeliveryTransportError
+type DeliveryFailure =
+  | InvalidEventError
+  | DeliveryIdentityError
+  | DeliveryTransportError
 
 export interface DeliveryConcurrencyMetrics {
   readonly globalActive: number
@@ -45,6 +51,7 @@ export const DeliverySupervisorLive = Layer.effect(
   DeliverySupervisor,
   Effect.gen(function* () {
     const configuration = yield* AppConfiguration
+    const crypto = yield* Crypto.Crypto
     const destinationClient = yield* DestinationClient
     const deliveries = yield* FiberSet.make<
       DeliveryOutcome,
@@ -135,7 +142,20 @@ export const DeliverySupervisorLive = Layer.effect(
     const deliverTo = Effect.fn("DeliverySupervisor.deliverTo")(
       function* (candidate: unknown, destination: Destination) {
         const event = yield* decodeIncomingEvent(candidate)
-        const task = sendDelivery(event, destination).pipe(
+        const deliveryId = yield* generateDeliveryId().pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.mapError((cause) =>
+            new DeliveryIdentityError({
+              destinationId: destination.id,
+              cause,
+            })
+          ),
+        )
+        const task = sendDelivery(
+          deliveryId,
+          event,
+          destination,
+        ).pipe(
           Effect.provideService(
             DestinationClient,
             destinationClient,

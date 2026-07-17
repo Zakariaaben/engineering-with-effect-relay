@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import type { DestinationClientService } from "../../src/destinationClient.ts"
 import { deliverCandidate } from "../../src/workflow.ts"
 import {
+  delivery,
   destination,
   event,
   makeGate,
@@ -35,7 +36,7 @@ export const reproduceUnboundedDeliveryPressure = async (
   const running = Effect.all(
     Array.from(
       { length: deliveryCount },
-      () => deliverCandidate(event, destination),
+      () => deliverCandidate(delivery.id, event, destination),
     ),
     { concurrency: "unbounded" },
   ).pipe(

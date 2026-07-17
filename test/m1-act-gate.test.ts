@@ -7,6 +7,7 @@ import {
 } from "../src/errors.ts"
 import { deliverCandidate } from "../src/workflow.ts"
 import {
+  delivery,
   destination,
   event,
   makeGate,
@@ -32,6 +33,7 @@ describe("Relay M1 act gate", () => {
 
     const exit = await Effect.runPromiseExit(
       deliverCandidate(
+        delivery.id,
         { ...event, amountCents: "2500" },
         destination,
       ).pipe(provideDestinationClient(client)),
@@ -51,7 +53,7 @@ describe("Relay M1 act gate", () => {
     }
 
     const exit = await Effect.runPromiseExit(
-      deliverCandidate(event, destination).pipe(
+      deliverCandidate(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
     )
@@ -60,6 +62,7 @@ describe("Relay M1 act gate", () => {
 
     expect(reason?.error).toEqual(
       new DeliveryTransportError({
+        deliveryId: delivery.id,
         destinationId: destination.id,
         cause: transportCause,
       }),
@@ -68,11 +71,11 @@ describe("Relay M1 act gate", () => {
 
   it("keeps an HTTP rejection as an observed outcome", async () => {
     const client: DestinationClientService = {
-      post: () => Promise.resolve(503),
+      post: () => Promise.resolve(400),
     }
 
     const outcome = await Effect.runPromise(
-      deliverCandidate(event, destination).pipe(
+      deliverCandidate(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
     )
@@ -80,7 +83,7 @@ describe("Relay M1 act gate", () => {
     expect(outcome).toEqual({
       _tag: "Rejected",
       destinationId: destination.id,
-      status: 503,
+      status: 400,
     })
   })
 
@@ -89,7 +92,11 @@ describe("Relay M1 act gate", () => {
     const client: DestinationClientService = {
       post: () => Promise.resolve(202),
     }
-    const program = deliverCandidate(event, destination).pipe(
+    const program = deliverCandidate(
+      delivery.id,
+      event,
+      destination,
+    ).pipe(
       provideDestinationClient(client),
       Effect.flatMap(() => Effect.die(defect)),
     )
@@ -119,7 +126,7 @@ describe("Relay M1 act gate", () => {
     const controller = new AbortController()
 
     const run = Effect.runPromiseExit(
-      deliverCandidate(event, destination).pipe(
+      deliverCandidate(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
       { signal: controller.signal },

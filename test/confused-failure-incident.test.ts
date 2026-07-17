@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import type { DestinationClientService } from "../src/destinationClient.ts"
 import { deliverCandidate } from "../src/workflow.ts"
 import {
+  delivery,
   destination,
   event,
   provideDestinationClient,
@@ -18,10 +19,15 @@ describe("C02-07 confused-failure incident", () => {
       post: () => Promise.reject(new Error("connection reset")),
     }
     const invalid = deliverCandidate(
+      delivery.id,
       { ...event, amountCents: "2500" },
       destination,
     ).pipe(provideDestinationClient(acceptedClient))
-    const transport = deliverCandidate(event, destination).pipe(
+    const transport = deliverCandidate(
+      delivery.id,
+      event,
+      destination,
+    ).pipe(
       provideDestinationClient(failedClient),
     )
     const defect = Effect.die(new Error("broken invariant"))
