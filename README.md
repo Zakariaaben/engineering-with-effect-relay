@@ -22,5 +22,4 @@ This is a production-shaped teaching system, not a ready-to-deploy public
 webhook service. Security, tenancy, SSRF protection, secret rotation, quotas,
 retention, compliance, and multi-region operation require additional design.
 
-The course repository is
-[Zakariaaben/learning-effect](https://github.com/Zakariaaben/learning-effect).
+Relay accompanies the learner-facing Engineering with Effect course.
