@@ -70,6 +70,7 @@ describe("C03-08 runtime boundary", () => {
 
     expect(shutdown.registrationCount()).toBe(1)
     expect((await application.deliver(event))._tag).toBe("Delivered")
+    expect(await application.activeDeliveryCount()).toBe(0)
     expect(requests).toEqual([{
       endpoint: "https://hooks.example.test/runtime",
       authorization: "Bearer runtime-secret",
@@ -123,6 +124,7 @@ describe("C03-08 runtime boundary", () => {
 
     const delivery = application.deliver(event)
     const clientSignal = await started.promise
+    expect(await application.activeDeliveryCount()).toBe(1)
     const stopped = shutdown.trigger()
 
     await expect(delivery).rejects.toBeDefined()

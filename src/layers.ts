@@ -4,6 +4,7 @@ import {
   makeFetchDestinationClient,
   type Fetch,
 } from "./destinationClient.ts"
+import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
 import type {
   Delivery,
   DeliveryId,
@@ -46,10 +47,15 @@ export const makeRelayAdapterLayer = (fetch: Fetch) =>
 export const makeRelayApplicationLayer = (
   fetch: Fetch,
   configProvider: ConfigProvider.ConfigProvider,
-) =>
-  Layer.merge(
+) => {
+  const dependencies = Layer.merge(
     makeRelayAdapterLayer(fetch),
     AppConfigurationLive,
   ).pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
   )
+
+  return DeliverySupervisorLive.pipe(
+    Layer.provide(dependencies),
+  )
+}

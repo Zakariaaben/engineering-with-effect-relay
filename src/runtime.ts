@@ -3,11 +3,10 @@ import {
   Effect,
   ManagedRuntime,
 } from "effect"
-import { AppConfiguration } from "./configuration.ts"
+import { DeliverySupervisor } from "./deliverySupervisor.ts"
 import type { Fetch } from "./destinationClient.ts"
 import { makeRelayApplicationLayer } from "./layers.ts"
 import type { DeliveryOutcome } from "./model.ts"
-import { deliverCandidate } from "./workflow.ts"
 
 export type RegisterShutdownHook = (
   shutdown: () => Promise<void>,
@@ -15,17 +14,22 @@ export type RegisterShutdownHook = (
 
 export interface RelayApplication {
   readonly deliver: (candidate: unknown) => Promise<DeliveryOutcome>
+  readonly activeDeliveryCount: () => Promise<number>
   readonly shutdown: () => Promise<void>
 }
 
 const deliverConfiguredCandidate = Effect.fn(
   "Relay.deliverConfiguredCandidate",
 )(function* (candidate: unknown) {
-  const configuration = yield* AppConfiguration
-  return yield* deliverCandidate(
-    candidate,
-    configuration.destination,
-  )
+  const supervisor = yield* DeliverySupervisor
+  return yield* supervisor.deliver(candidate)
+})
+
+const activeDeliveryCount = Effect.fn(
+  "Relay.activeDeliveryCount",
+)(function* () {
+  const supervisor = yield* DeliverySupervisor
+  return yield* supervisor.activeCount()
 })
 
 export const startRelayApplication = async (options: {
@@ -59,6 +63,8 @@ export const startRelayApplication = async (options: {
   }
 
   return {
+    activeDeliveryCount: () =>
+      runtime.runPromise(activeDeliveryCount()),
     deliver: (candidate) =>
       runtime.runPromise(deliverConfiguredCandidate(candidate)),
     shutdown,
