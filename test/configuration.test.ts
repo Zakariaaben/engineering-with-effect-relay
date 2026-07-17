@@ -44,6 +44,7 @@ describe("C03-07 application configuration", () => {
       perDestination: 4,
     })
     expect(configuration.flow).toEqual({
+      deliveryRequestsCapacity: 1_024,
       deliveryEventsCapacity: 64,
     })
     expect({
@@ -118,6 +119,28 @@ describe("C03-07 application configuration", () => {
     )
     expect(error).toBeInstanceOf(Config.ConfigError)
     expect(error.message).toContain("RELAY_DELIVERY_EVENTS_CAPACITY")
+    expect(error.message).not.toContain("must-not-leak")
+  })
+
+  it("loads and validates the delivery-request admission capacity", async () => {
+    const configured = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
+        RELAY_DELIVERY_REQUESTS_CAPACITY: 8,
+      }),
+    )
+    expect(configured.flow.deliveryRequestsCapacity).toBe(8)
+
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_DELIVERY_REQUESTS_CAPACITY: 0,
+      }).pipe(Effect.flip),
+    )
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain("RELAY_DELIVERY_REQUESTS_CAPACITY")
     expect(error.message).not.toContain("must-not-leak")
   })
 

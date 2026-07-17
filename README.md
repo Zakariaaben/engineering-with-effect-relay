@@ -73,3 +73,19 @@ The stable key prevents that duplicate only when the destination validates and
 deduplicates it. Relay therefore does not claim exactly-once delivery. This is
 still an in-memory, single-process checkpoint: retry state and attempt history
 do not survive a crash, and capacity is not coordinated across processes.
+
+## C06-14 load-governance checkpoint
+
+Relay now admits delivery requests through a bounded local Queue consumed by a
+scoped Stream. A separate admission permit bounds the complete accepted
+population, including work waiting behind active-attempt limits. When no permit
+is available, the caller receives a typed `DeliveryOverloaded` failure instead
+of creating another waiting fiber.
+
+The earlier global and per-destination attempt limits remain the socket
+bulkheads. Load snapshots expose admitted deliveries, active owned deliveries,
+queue depth and capacity, active attempts by destination, configured limits,
+and cumulative rejections. The queue and permits are process-local: they do not
+coordinate a fleet, provide durable intake, or reserve queue space per tenant.
+Relay does not add a proactive time-based rate limit without a destination rate
+contract.
