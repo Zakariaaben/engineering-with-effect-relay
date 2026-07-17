@@ -53,3 +53,16 @@ for their finalizers before disposal completes.
 This remains an in-memory, single-process milestone. It has no durable intake,
 retry policy, crash recovery, untrusted-destination defense, or cross-process
 capacity guarantee.
+
+## C05-06 checkpoint
+
+Relay now classifies final HTTP statuses before policy acts: successful and
+permanently rejected responses are terminal, while 408, 425, 429, and 5xx
+responses remain eligible for a later bounded retry policy. The outbound
+adapter disables redirects and sends one generated `DeliveryId` as the same
+`Idempotency-Key` for every attempt of a logical delivery.
+
+The key prevents duplicate remote effects only when the destination validates
+and deduplicates it. Relay still has no retry loop at this checkpoint, and it
+does not claim exactly-once delivery. The M4 incident checkpoint will connect
+these outcomes to bounded retry and visible exhaustion.

@@ -5,6 +5,7 @@ import {
 } from "../src/destinationClient.ts"
 import { sendDeliveryWithPromise } from "../src/promiseSender.ts"
 import {
+  delivery,
   destination,
   event,
   makeGate,
@@ -23,6 +24,7 @@ describe("Relay M0 Promise baseline", () => {
     const controller = new AbortController()
 
     const run = sendDeliveryWithPromise(
+      delivery.id,
       event,
       destination,
       client,
@@ -43,6 +45,7 @@ describe("Relay M0 Promise baseline", () => {
 
     await expect(
       sendDeliveryWithPromise(
+        delivery.id,
         event,
         destination,
         client,
@@ -68,6 +71,7 @@ describe("Relay M0 Promise baseline", () => {
     const controller = new AbortController()
 
     const run = sendDeliveryWithPromise(
+      delivery.id,
       event,
       destination,
       client,
@@ -83,7 +87,7 @@ describe("Relay M0 Promise baseline", () => {
   it("discards the response body without exposing it", async () => {
     let bodyDiscarded = false
     const client = makeFetchDestinationClient(async () => ({
-      status: 503,
+      status: 400,
       body: {
         cancel: async () => {
           bodyDiscarded = true
@@ -93,6 +97,7 @@ describe("Relay M0 Promise baseline", () => {
     const controller = new AbortController()
 
     const outcome = await sendDeliveryWithPromise(
+      delivery.id,
       event,
       destination,
       client,
@@ -102,7 +107,7 @@ describe("Relay M0 Promise baseline", () => {
     expect(outcome).toEqual({
       _tag: "Rejected",
       destinationId: destination.id,
-      status: 503,
+      status: 400,
     })
     expect(bodyDiscarded).toBe(true)
   })

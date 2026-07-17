@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import type { DestinationClientService } from "../src/destinationClient.ts"
 import { sendDelivery } from "../src/effectSender.ts"
 import {
+  delivery,
   destination,
   provideDestinationClient,
 } from "./fixtures.ts"
@@ -26,7 +27,7 @@ describe("C02-01 static-type incident", () => {
     }
 
     const outcome = await Effect.runPromise(
-      sendDelivery(event, destination).pipe(
+      sendDelivery(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
     )

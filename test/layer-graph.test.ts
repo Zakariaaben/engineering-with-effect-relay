@@ -79,7 +79,11 @@ describe("C03-06 Layer graph", () => {
       const repository = yield* DeliveryRepository
       yield* repository.save(delivery)
       const stored = yield* repository.findById(delivery.id)
-      const outcome = yield* sendDelivery(event, destination)
+      const outcome = yield* sendDelivery(
+        delivery.id,
+        event,
+        destination,
+      )
       return { stored, outcome }
     }).pipe(Effect.provide(adapters))
 

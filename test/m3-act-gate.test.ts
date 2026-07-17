@@ -1,3 +1,4 @@
+import { NodeCrypto } from "@effect/platform-node"
 import { describe, expect, it } from "bun:test"
 import {
   Context,
@@ -35,7 +36,7 @@ const makeSupervisorRuntime = (
   post: Context.Service.Shape<typeof DestinationClient>["post"],
   concurrency: { readonly global: number; readonly perDestination: number },
 ) => {
-  const dependencies = Layer.merge(
+  const dependencies = Layer.mergeAll(
     Layer.succeed(
       AppConfiguration,
       AppConfiguration.of({ destination: destinationA, concurrency }),
@@ -44,6 +45,7 @@ const makeSupervisorRuntime = (
       DestinationClient,
       DestinationClient.of({ post }),
     ),
+    NodeCrypto.layer,
   )
 
   return ManagedRuntime.make(

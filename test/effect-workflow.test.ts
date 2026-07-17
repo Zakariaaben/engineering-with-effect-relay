@@ -4,6 +4,7 @@ import type { DestinationClientService } from "../src/destinationClient.ts"
 import { sendDelivery } from "../src/effectSender.ts"
 import { DeliveryTransportError } from "../src/errors.ts"
 import {
+  delivery,
   destination,
   event,
   makeGate,
@@ -21,7 +22,11 @@ describe("Relay M0 Effect workflow", () => {
       },
     }
 
-    const program = sendDelivery(event, destination).pipe(
+    const program = sendDelivery(
+      delivery.id,
+      event,
+      destination,
+    ).pipe(
       provideDestinationClient(client),
     )
     expect(starts).toBe(0)
@@ -40,7 +45,7 @@ describe("Relay M0 Effect workflow", () => {
     }
 
     const failure = await Effect.runPromise(
-      sendDelivery(event, destination).pipe(
+      sendDelivery(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
         Effect.flip,
       ),
@@ -48,6 +53,7 @@ describe("Relay M0 Effect workflow", () => {
 
     expect(failure).toEqual(
       new DeliveryTransportError({
+        deliveryId: delivery.id,
         destinationId: destination.id,
         cause,
       }),
@@ -71,7 +77,7 @@ describe("Relay M0 Effect workflow", () => {
     const controller = new AbortController()
 
     const run = Effect.runPromise(
-      sendDelivery(event, destination).pipe(
+      sendDelivery(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
       { signal: controller.signal },

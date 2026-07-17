@@ -27,14 +27,22 @@ export type Fetch = (
 export const makeFetchDestinationClient = (
   fetch: Fetch,
 ): DestinationClientService => DestinationClient.of({
-  post: async ({ endpoint, authorization, body, signal }) => {
+  post: async ({
+    deliveryId,
+    endpoint,
+    authorization,
+    body,
+    signal,
+  }) => {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         authorization: `Bearer ${Redacted.value(authorization)}`,
         "content-type": "application/json",
+        "idempotency-key": `"${deliveryId}"`,
       },
       body,
+      redirect: "manual",
       signal,
     })
 

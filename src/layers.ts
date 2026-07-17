@@ -1,3 +1,4 @@
+import { NodeCrypto } from "@effect/platform-node"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import {
   DestinationClient,
@@ -48,9 +49,10 @@ export const makeRelayApplicationLayer = (
   fetch: Fetch,
   configProvider: ConfigProvider.ConfigProvider,
 ) => {
-  const dependencies = Layer.merge(
+  const dependencies = Layer.mergeAll(
     makeRelayAdapterLayer(fetch),
     AppConfigurationLive,
+    NodeCrypto.layer,
   ).pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
   )
