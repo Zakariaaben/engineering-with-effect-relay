@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect"
+import { ConfigProvider, Effect, Layer, Option } from "effect"
 import {
   DestinationClient,
   makeFetchDestinationClient,
@@ -43,8 +43,13 @@ export const makeRelayAdapterLayer = (fetch: Fetch) =>
     DeliveryRepositoryMemory,
   )
 
-export const makeRelayApplicationLayer = (fetch: Fetch) =>
+export const makeRelayApplicationLayer = (
+  fetch: Fetch,
+  configProvider: ConfigProvider.ConfigProvider,
+) =>
   Layer.merge(
     makeRelayAdapterLayer(fetch),
     AppConfigurationLive,
+  ).pipe(
+    Layer.provide(ConfigProvider.layer(configProvider)),
   )
