@@ -16,6 +16,7 @@ import {
   DeliverySupervisor,
   DeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
+import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
   observeDeliveryAttempt,
   runDeliveryWithRetry,
@@ -75,6 +76,7 @@ const makeM4Layer = (
     Layer.succeed(Crypto.Crypto, makeTestCrypto()),
   )
   const supervisor = DeliverySupervisorLive.pipe(
+    Layer.provide(DeliveryEventsLive),
     Layer.provide(dependencies),
   )
   return Layer.merge(supervisor, TestClock.layer())

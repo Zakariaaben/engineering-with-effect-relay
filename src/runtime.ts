@@ -2,7 +2,9 @@ import {
   ConfigProvider,
   Effect,
   ManagedRuntime,
+  Stream,
 } from "effect"
+import { DeliveryEvents } from "./deliveryEvents.ts"
 import {
   DeliverySupervisor,
   type DeliveryConcurrencyMetrics,
@@ -17,6 +19,7 @@ export type RegisterShutdownHook = (
 
 export interface RelayApplication {
   readonly deliver: (candidate: unknown) => Promise<DeliveryResult>
+  readonly deliveryResults: Stream.Stream<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
   readonly shutdown: () => Promise<void>
@@ -43,6 +46,13 @@ const concurrencyMetrics = Effect.fn(
   return yield* supervisor.concurrencyMetrics()
 })
 
+const deliveryResults = Effect.fn(
+  "Relay.deliveryResults",
+)(function* () {
+  const events = yield* DeliveryEvents
+  return events.results
+})
+
 export const startRelayApplication = async (options: {
   readonly fetch: Fetch
   readonly configProvider: ConfigProvider.ConfigProvider
@@ -67,19 +77,21 @@ export const startRelayApplication = async (options: {
 
   try {
     await runtime.context()
+    const results = await runtime.runPromise(deliveryResults())
     removeShutdownHook = options.registerShutdownHook(shutdown)
+
+    return {
+      activeDeliveryCount: () =>
+        runtime.runPromise(activeDeliveryCount()),
+      concurrencyMetrics: () =>
+        runtime.runPromise(concurrencyMetrics()),
+      deliveryResults: results,
+      deliver: (candidate) =>
+        runtime.runPromise(deliverConfiguredCandidate(candidate)),
+      shutdown,
+    }
   } catch (error) {
     await shutdown()
     throw error
-  }
-
-  return {
-    activeDeliveryCount: () =>
-      runtime.runPromise(activeDeliveryCount()),
-    concurrencyMetrics: () =>
-      runtime.runPromise(concurrencyMetrics()),
-    deliver: (candidate) =>
-      runtime.runPromise(deliverConfiguredCandidate(candidate)),
-    shutdown,
   }
 }
