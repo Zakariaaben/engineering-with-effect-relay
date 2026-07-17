@@ -9,6 +9,7 @@ import {
 } from "effect"
 import {
   AppConfiguration,
+  defaultDeliveryFlow,
   defaultDeliveryResilience,
 } from "../src/configuration.ts"
 import {
@@ -46,6 +47,7 @@ const makeSupervisorRuntime = (
       AppConfiguration.of({
         destination: destinationA,
         concurrency,
+        flow: defaultDeliveryFlow,
         resilience: defaultDeliveryResilience,
       }),
     ),

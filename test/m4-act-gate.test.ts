@@ -10,6 +10,7 @@ import {
 import { TestClock } from "effect/testing"
 import {
   AppConfiguration,
+  defaultDeliveryFlow,
   type DeliveryResilience,
 } from "../src/configuration.ts"
 import {
@@ -66,6 +67,7 @@ const makeM4Layer = (
       AppConfiguration.of({
         destination,
         concurrency: { global: 4, perDestination: 2 },
+        flow: defaultDeliveryFlow,
         resilience: deliveryResilience,
       }),
     ),

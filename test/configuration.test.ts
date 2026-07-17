@@ -43,6 +43,9 @@ describe("C03-07 application configuration", () => {
       global: 64,
       perDestination: 4,
     })
+    expect(configuration.flow).toEqual({
+      deliveryEventsCapacity: 64,
+    })
     expect({
       attemptTimeout: Duration.toMillis(
         configuration.resilience.attemptTimeout,
@@ -93,6 +96,28 @@ describe("C03-07 application configuration", () => {
 
     expect(error).toBeInstanceOf(Config.ConfigError)
     expect(error.message).toContain("RELAY_GLOBAL_CONCURRENCY")
+    expect(error.message).not.toContain("must-not-leak")
+  })
+
+  it("loads and validates the delivery-event buffer capacity", async () => {
+    const configured = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
+        RELAY_DELIVERY_EVENTS_CAPACITY: 8,
+      }),
+    )
+    expect(configured.flow.deliveryEventsCapacity).toBe(8)
+
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_DELIVERY_EVENTS_CAPACITY: 0,
+      }).pipe(Effect.flip),
+    )
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain("RELAY_DELIVERY_EVENTS_CAPACITY")
     expect(error.message).not.toContain("must-not-leak")
   })
 
