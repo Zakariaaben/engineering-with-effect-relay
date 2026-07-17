@@ -1,4 +1,4 @@
-import { Context } from "effect"
+import { Context, Redacted } from "effect"
 import type { DeliveryRequest } from "./model.ts"
 
 export class DestinationClient extends Context.Service<DestinationClient, {
@@ -31,7 +31,7 @@ export const makeFetchDestinationClient = (
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${authorization}`,
+        authorization: `Bearer ${Redacted.value(authorization)}`,
         "content-type": "application/json",
       },
       body,

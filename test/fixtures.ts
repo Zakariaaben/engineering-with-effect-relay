@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Redacted } from "effect"
 import {
   DestinationClient,
   type DestinationClientService,
@@ -24,7 +24,7 @@ export const event: RelayEvent = RelayEvent.make({
 export const destination: Destination = {
   id: DestinationId.make("dst-1"),
   endpoint: new URL("https://hooks.example.test/invoices"),
-  authorization: "test-secret",
+  authorization: Redacted.make("test-secret"),
 }
 
 export const delivery: Delivery = Delivery.make({
