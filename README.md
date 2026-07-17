@@ -23,3 +23,21 @@ webhook service. Security, tenancy, SSRF protection, secret rotation, quotas,
 retention, compliance, and multi-region operation require additional design.
 
 Relay accompanies the learner-facing Engineering with Effect course.
+
+## M0 checkpoint
+
+The first checkpoint contains an honest Promise sender and a deliberately
+small Effect-shaped equivalent. Both use the same pure delivery policy and an
+injected native HTTP adapter; the comparison is about execution and failure
+contracts, not a Promise strawman.
+
+Run its deterministic evidence with:
+
+```bash
+bun install --frozen-lockfile
+bun run validate
+```
+
+The short [Act 1 design note](docs/act-01-design-note.md) records which pressure
+comes from Relay's domain, Promise semantics, or missing application
+architecture.
