@@ -1,19 +1,12 @@
-import { Data, Effect } from "effect"
+import { Effect } from "effect"
 import type { DestinationClient } from "./destinationClient.ts"
+import { DeliveryTransportError } from "./errors.ts"
 import {
   classifyDeliveryStatus,
   makeDeliveryRequest,
   type Destination,
-  type DestinationId,
   type RelayEvent,
 } from "./model.ts"
-
-export class DeliveryTransportError extends Data.TaggedError(
-  "DeliveryTransportError",
-)<{
-  readonly destinationId: DestinationId
-  readonly cause: unknown
-}> {}
 
 export const sendDelivery = Effect.fn("Relay.sendDelivery")(
   function* (

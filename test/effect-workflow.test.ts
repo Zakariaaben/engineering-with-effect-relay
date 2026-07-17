@@ -1,10 +1,8 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
 import type { DestinationClient } from "../src/destinationClient.ts"
-import {
-  DeliveryTransportError,
-  sendDelivery,
-} from "../src/effectSender.ts"
+import { sendDelivery } from "../src/effectSender.ts"
+import { DeliveryTransportError } from "../src/errors.ts"
 import {
   destination,
   event,
