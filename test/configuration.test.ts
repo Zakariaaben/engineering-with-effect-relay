@@ -38,6 +38,40 @@ describe("C03-07 application configuration", () => {
     expect(Redacted.value(configuration.destination.authorization)).toBe(
       "test-authorization",
     )
+    expect(configuration.concurrency).toEqual({
+      global: 64,
+      perDestination: 4,
+    })
+  })
+
+  it("loads positive concurrency limits", async () => {
+    const configuration = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
+        RELAY_GLOBAL_CONCURRENCY: 8,
+        RELAY_DESTINATION_CONCURRENCY: 2,
+      }),
+    )
+
+    expect(configuration.concurrency).toEqual({
+      global: 8,
+      perDestination: 2,
+    })
+  })
+
+  it("rejects non-positive concurrency limits", async () => {
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_GLOBAL_CONCURRENCY: 0,
+      }).pipe(Effect.flip),
+    )
+
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain("RELAY_GLOBAL_CONCURRENCY")
+    expect(error.message).not.toContain("must-not-leak")
   })
 
   it("does not replace an invalid refined ID with the default", async () => {
