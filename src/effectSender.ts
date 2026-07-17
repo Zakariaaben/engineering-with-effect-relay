@@ -4,13 +4,14 @@ import {
   classifyDeliveryStatus,
   makeDeliveryRequest,
   type Destination,
+  type DestinationId,
   type RelayEvent,
 } from "./model.ts"
 
 export class DeliveryTransportError extends Data.TaggedError(
   "DeliveryTransportError",
 )<{
-  readonly destinationId: string
+  readonly destinationId: DestinationId
   readonly cause: unknown
 }> {}
 
