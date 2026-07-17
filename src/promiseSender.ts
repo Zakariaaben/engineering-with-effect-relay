@@ -1,4 +1,4 @@
-import type { DestinationClient } from "./destinationClient.ts"
+import type { DestinationClientService } from "./destinationClient.ts"
 import {
   classifyDeliveryStatus,
   makeDeliveryRequest,
@@ -10,7 +10,7 @@ import {
 export const sendDeliveryWithPromise = async (
   event: RelayEvent,
   destination: Destination,
-  client: DestinationClient,
+  client: DestinationClientService,
   signal: AbortSignal,
 ): Promise<DeliveryOutcome> => {
   const request = makeDeliveryRequest(event, destination)

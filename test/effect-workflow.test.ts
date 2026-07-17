@@ -1,26 +1,29 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import type { DestinationClient } from "../src/destinationClient.ts"
+import type { DestinationClientService } from "../src/destinationClient.ts"
 import { sendDelivery } from "../src/effectSender.ts"
 import { DeliveryTransportError } from "../src/errors.ts"
 import {
   destination,
   event,
   makeGate,
+  provideDestinationClient,
 } from "./fixtures.ts"
 
 describe("Relay M0 Effect workflow", () => {
   it("stays lazy until its execution boundary", async () => {
     const response = makeGate<number>()
     let starts = 0
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => {
         starts += 1
         return response.promise
       },
     }
 
-    const program = sendDelivery(event, destination, client)
+    const program = sendDelivery(event, destination).pipe(
+      provideDestinationClient(client),
+    )
     expect(starts).toBe(0)
 
     const run = Effect.runPromise(program)
@@ -32,12 +35,15 @@ describe("Relay M0 Effect workflow", () => {
 
   it("maps an arbitrary rejection to a typed transport failure", async () => {
     const cause = Symbol("connection reset")
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => Promise.reject(cause),
     }
 
     const failure = await Effect.runPromise(
-      sendDelivery(event, destination, client).pipe(Effect.flip),
+      sendDelivery(event, destination).pipe(
+        provideDestinationClient(client),
+        Effect.flip,
+      ),
     )
 
     expect(failure).toEqual(
@@ -50,7 +56,7 @@ describe("Relay M0 Effect workflow", () => {
 
   it("forwards host cancellation to the client signal", async () => {
     const ready = makeGate<AbortSignal>()
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: ({ signal }) => {
         ready.resolve(signal)
         return new Promise<number>((_resolve, reject) => {
@@ -65,7 +71,9 @@ describe("Relay M0 Effect workflow", () => {
     const controller = new AbortController()
 
     const run = Effect.runPromise(
-      sendDelivery(event, destination, client),
+      sendDelivery(event, destination).pipe(
+        provideDestinationClient(client),
+      ),
       { signal: controller.signal },
     )
     const clientSignal = await ready.promise

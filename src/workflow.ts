@@ -1,5 +1,4 @@
 import { Effect } from "effect"
-import type { DestinationClient } from "./destinationClient.ts"
 import { sendDelivery } from "./effectSender.ts"
 import { InvalidEventError } from "./errors.ts"
 import {
@@ -21,9 +20,8 @@ export const deliverCandidate = Effect.fn("Relay.deliverCandidate")(
   function* (
     candidate: unknown,
     destination: Destination,
-    client: DestinationClient,
   ) {
     const event = yield* decodeIncomingEvent(candidate)
-    return yield* sendDelivery(event, destination, client)
+    return yield* sendDelivery(event, destination)
   },
 )

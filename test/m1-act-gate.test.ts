@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { Cause, Effect, Exit } from "effect"
-import type { DestinationClient } from "../src/destinationClient.ts"
+import type { DestinationClientService } from "../src/destinationClient.ts"
 import {
   DeliveryTransportError,
   InvalidEventError,
@@ -10,6 +10,7 @@ import {
   destination,
   event,
   makeGate,
+  provideDestinationClient,
 } from "./fixtures.ts"
 
 const failureCause = <A, E>(exit: Exit.Exit<A, E>): Cause.Cause<E> => {
@@ -22,7 +23,7 @@ const failureCause = <A, E>(exit: Exit.Exit<A, E>): Cause.Cause<E> => {
 describe("Relay M1 act gate", () => {
   it("rejects invalid input before outbound work", async () => {
     let clientCalls = 0
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => {
         clientCalls += 1
         return Promise.resolve(202)
@@ -33,8 +34,7 @@ describe("Relay M1 act gate", () => {
       deliverCandidate(
         { ...event, amountCents: "2500" },
         destination,
-        client,
-      ),
+      ).pipe(provideDestinationClient(client)),
     )
     const cause = failureCause(exit)
     const reason = cause.reasons.find(Cause.isFailReason)
@@ -46,12 +46,14 @@ describe("Relay M1 act gate", () => {
 
   it("keeps client rejection as a transport failure", async () => {
     const transportCause = Symbol("connection reset")
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => Promise.reject(transportCause),
     }
 
     const exit = await Effect.runPromiseExit(
-      deliverCandidate(event, destination, client),
+      deliverCandidate(event, destination).pipe(
+        provideDestinationClient(client),
+      ),
     )
     const cause = failureCause(exit)
     const reason = cause.reasons.find(Cause.isFailReason)
@@ -65,12 +67,14 @@ describe("Relay M1 act gate", () => {
   })
 
   it("keeps an HTTP rejection as an observed outcome", async () => {
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => Promise.resolve(503),
     }
 
     const outcome = await Effect.runPromise(
-      deliverCandidate(event, destination, client),
+      deliverCandidate(event, destination).pipe(
+        provideDestinationClient(client),
+      ),
     )
 
     expect(outcome).toEqual({
@@ -82,10 +86,11 @@ describe("Relay M1 act gate", () => {
 
   it("keeps a downstream invariant violation as a defect", async () => {
     const defect = new Error("broken invariant")
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: () => Promise.resolve(202),
     }
-    const program = deliverCandidate(event, destination, client).pipe(
+    const program = deliverCandidate(event, destination).pipe(
+      provideDestinationClient(client),
       Effect.flatMap(() => Effect.die(defect)),
     )
 
@@ -99,7 +104,7 @@ describe("Relay M1 act gate", () => {
 
   it("keeps owner cancellation as interruption", async () => {
     const ready = makeGate<AbortSignal>()
-    const client: DestinationClient = {
+    const client: DestinationClientService = {
       post: ({ signal }) => {
         ready.resolve(signal)
         return new Promise<number>((_resolve, reject) => {
@@ -114,7 +119,9 @@ describe("Relay M1 act gate", () => {
     const controller = new AbortController()
 
     const run = Effect.runPromiseExit(
-      deliverCandidate(event, destination, client),
+      deliverCandidate(event, destination).pipe(
+        provideDestinationClient(client),
+      ),
       { signal: controller.signal },
     )
     const clientSignal = await ready.promise

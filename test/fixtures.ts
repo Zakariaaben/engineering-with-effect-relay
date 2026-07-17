@@ -1,5 +1,13 @@
+import { Effect } from "effect"
+import {
+  DestinationClient,
+  type DestinationClientService,
+} from "../src/destinationClient.ts"
 import {
   AmountCents,
+  Delivery,
+  DeliveryId,
+  DeliveryState,
   DestinationId,
   EventId,
   InvoiceId,
@@ -18,6 +26,17 @@ export const destination: Destination = {
   endpoint: new URL("https://hooks.example.test/invoices"),
   authorization: "test-secret",
 }
+
+export const delivery: Delivery = Delivery.make({
+  id: DeliveryId.make("dlv-1"),
+  eventId: event.id,
+  destinationId: destination.id,
+  state: DeliveryState.cases.Pending.make({}),
+})
+
+export const provideDestinationClient = (
+  client: DestinationClientService,
+) => Effect.provideService(DestinationClient, client)
 
 export const makeGate = <A>() => {
   let settle: ((value: A) => void) | undefined
