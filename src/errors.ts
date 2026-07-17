@@ -25,6 +25,14 @@ export class DeliveryIdentityError extends Schema.TaggedErrorClass<DeliveryIdent
   },
 ) {}
 
+export class DeliveryOverloaded extends Schema.TaggedErrorClass<DeliveryOverloaded>()(
+  "DeliveryOverloaded",
+  {
+    admissionCapacity: Schema.Int.check(Schema.isGreaterThan(0)),
+    destinationId: DestinationId,
+  },
+) {}
+
 export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRepositoryError>()(
   "DeliveryRepositoryError",
   {

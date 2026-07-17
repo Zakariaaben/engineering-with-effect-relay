@@ -1,13 +1,18 @@
 import {
+  Clock,
   Context,
   Crypto,
+  Deferred,
   Duration,
   Effect,
-  Fiber,
   FiberSet,
   Layer,
+  Option,
+  Queue,
+  Random,
   Ref,
   Semaphore,
+  Stream,
   SynchronizedRef,
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
@@ -19,6 +24,7 @@ import { DeliveryEvents } from "./deliveryEvents.ts"
 import { DestinationClient } from "./destinationClient.ts"
 import {
   DeliveryIdentityError,
+  DeliveryOverloaded,
   type InvalidEventError,
 } from "./errors.ts"
 import { sendDelivery } from "./effectSender.ts"
@@ -30,13 +36,39 @@ import type {
 } from "./model.ts"
 import { decodeIncomingEvent } from "./workflow.ts"
 
-type DeliveryFailure =
+type DeliveryExecutionFailure =
   | InvalidEventError
   | DeliveryIdentityError
+
+type DeliveryFailure =
+  | DeliveryExecutionFailure
+  | DeliveryOverloaded
+
+interface DeliveryJob {
+  readonly candidate: unknown
+  readonly cancelled: Deferred.Deferred<void>
+  readonly clock: Clock.Clock
+  readonly destination: Destination
+  readonly random: Context.Service.Shape<typeof Random.Random>
+  readonly result: Deferred.Deferred<
+    DeliveryResult,
+    DeliveryExecutionFailure
+  >
+}
 
 export interface DeliveryConcurrencyMetrics {
   readonly globalActive: number
   readonly activeByDestination: ReadonlyMap<DestinationId, number>
+}
+
+export interface DeliveryLoadMetrics extends DeliveryConcurrencyMetrics {
+  readonly activeDeliveries: number
+  readonly admittedDeliveries: number
+  readonly globalConcurrencyLimit: number
+  readonly perDestinationConcurrencyLimit: number
+  readonly rejected: number
+  readonly requestQueueCapacity: number
+  readonly requestQueueDepth: number
 }
 
 export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
@@ -49,6 +81,7 @@ export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
   ) => Effect.Effect<DeliveryResult, DeliveryFailure>
   readonly activeCount: () => Effect.Effect<number>
   readonly concurrencyMetrics: () => Effect.Effect<DeliveryConcurrencyMetrics>
+  readonly loadMetrics: () => Effect.Effect<DeliveryLoadMetrics>
 }>()("Relay/DeliverySupervisor") {}
 
 export const DeliverySupervisorLive = Layer.effect(
@@ -58,10 +91,18 @@ export const DeliverySupervisorLive = Layer.effect(
     const crypto = yield* Crypto.Crypto
     const destinationClient = yield* DestinationClient
     const deliveryEvents = yield* DeliveryEvents
-    const deliveries = yield* FiberSet.make<
-      DeliveryResult,
-      DeliveryFailure
-    >()
+    const deliveries = yield* FiberSet.make<void>()
+    const requests = yield* Effect.acquireRelease(
+      Queue.dropping<DeliveryJob>(
+        configuration.flow.deliveryRequestsCapacity,
+      ),
+      Queue.shutdown,
+    )
+    const admission = yield* Semaphore.make(
+      configuration.flow.deliveryRequestsCapacity,
+    )
+    const admitted = yield* Ref.make(0)
+    const rejected = yield* Ref.make(0)
     const globalCapacity = yield* Semaphore.make(
       configuration.concurrency.global,
     )
@@ -144,7 +185,7 @@ export const DeliverySupervisorLive = Layer.effect(
       },
     )
 
-    const deliverTo = Effect.fn("DeliverySupervisor.deliverTo")(
+    const executeDelivery = Effect.fn("DeliverySupervisor.executeDelivery")(
       function* (candidate: unknown, destination: Destination) {
         const event = yield* decodeIncomingEvent(candidate)
         const deliveryId = yield* generateDeliveryId().pipe(
@@ -183,16 +224,103 @@ export const DeliverySupervisorLive = Layer.effect(
               ),
             ),
         )
-        const fiber = yield* FiberSet.run(
-          deliveries,
-          task.pipe(Effect.tap(deliveryEvents.publish)),
-        )
+        return yield* task.pipe(Effect.tap(deliveryEvents.publish))
+      },
+    )
 
-        return yield* Fiber.join(fiber).pipe(
-          Effect.onInterrupt(() =>
-            Fiber.interrupt(fiber).pipe(Effect.asVoid)
+    const processJob = Effect.fn("DeliverySupervisor.processJob")(
+      function* (job: DeliveryJob) {
+        const wasCancelled = yield* Deferred.isDone(job.cancelled)
+        const exit = yield* (
+          wasCancelled
+            ? Effect.interrupt
+            : Effect.raceFirst(
+                executeDelivery(job.candidate, job.destination).pipe(
+                  Effect.provideService(Clock.Clock, job.clock),
+                  Effect.provideService(Random.Random, job.random),
+                ),
+                Deferred.await(job.cancelled).pipe(
+                  Effect.andThen(Effect.interrupt),
+                ),
+              )
+        ).pipe(Effect.exit)
+
+        yield* Deferred.done(job.result, exit)
+      },
+    )
+
+    const dispatchJob = Effect.fn("DeliverySupervisor.dispatchJob")(
+      function* (job: DeliveryJob) {
+        yield* FiberSet.run(deliveries, processJob(job))
+      },
+    )
+
+    yield* Stream.fromQueue(requests).pipe(
+      Stream.runForEach(dispatchJob),
+      Effect.forkScoped,
+    )
+
+    const overload = Effect.fn("DeliverySupervisor.overload")(
+      (destinationId: DestinationId) =>
+        Ref.update(rejected, (count) => count + 1).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new DeliveryOverloaded({
+                admissionCapacity:
+                  configuration.flow.deliveryRequestsCapacity,
+                destinationId,
+              }),
+            ),
+          ),
+        ),
+    )
+
+    const trackAdmitted = <A, E, R>(task: Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        Ref.update(admitted, (count) => count + 1),
+        () => task,
+        () => Ref.update(admitted, (count) => count - 1),
+      )
+
+    const deliverTo = Effect.fn("DeliverySupervisor.deliverTo")(
+      function* (candidate: unknown, destination: Destination) {
+        const accepted = yield* admission.withPermitsIfAvailable(1)(
+          trackAdmitted(
+            Effect.gen(function* () {
+              const result = yield* Deferred.make<
+                DeliveryResult,
+                DeliveryExecutionFailure
+              >()
+              const cancelled = yield* Deferred.make<void>()
+              const clock = yield* Clock.Clock
+              const random = yield* Random.Random
+              const offered = yield* Queue.offer(requests, {
+                candidate,
+                cancelled,
+                clock,
+                destination,
+                random,
+                result,
+              })
+
+              if (!offered) {
+                return yield* overload(destination.id)
+              }
+
+              return yield* Deferred.await(result).pipe(
+                Effect.onInterrupt(() =>
+                  Deferred.succeed(cancelled, undefined).pipe(
+                    Effect.asVoid,
+                  )
+                ),
+              )
+            }),
           ),
         )
+
+        return Option.isSome(accepted)
+          ? accepted.value
+          : yield* overload(destination.id)
       },
     )
     const deliver = Effect.fn("DeliverySupervisor.deliver")(
@@ -209,12 +337,30 @@ export const DeliverySupervisorLive = Layer.effect(
     )(function* () {
       return yield* Ref.get(active)
     })
+    const loadMetrics = Effect.fn(
+      "DeliverySupervisor.loadMetrics",
+    )(function* () {
+      const concurrency = yield* Ref.get(active)
+      return {
+        ...concurrency,
+        activeDeliveries: yield* FiberSet.size(deliveries),
+        admittedDeliveries: yield* Ref.get(admitted),
+        globalConcurrencyLimit: configuration.concurrency.global,
+        perDestinationConcurrencyLimit:
+          configuration.concurrency.perDestination,
+        rejected: yield* Ref.get(rejected),
+        requestQueueCapacity:
+          configuration.flow.deliveryRequestsCapacity,
+        requestQueueDepth: yield* Queue.size(requests),
+      }
+    })
 
     return DeliverySupervisor.of({
       activeCount,
       concurrencyMetrics,
       deliver,
       deliverTo,
+      loadMetrics,
     })
   }),
 )

@@ -24,6 +24,7 @@ export interface DeliveryResilience {
 }
 
 export interface DeliveryFlow {
+  readonly deliveryRequestsCapacity: number
   readonly deliveryEventsCapacity: number
 }
 
@@ -36,6 +37,7 @@ export const defaultDeliveryResilience: DeliveryResilience = {
 }
 
 export const defaultDeliveryFlow: DeliveryFlow = {
+  deliveryRequestsCapacity: 1_024,
   deliveryEventsCapacity: 64,
 }
 
@@ -77,6 +79,10 @@ const concurrency = Config.all({
 })
 
 const flow = Config.all({
+  deliveryRequestsCapacity: Config.schema(
+    PositiveInteger,
+    "RELAY_DELIVERY_REQUESTS_CAPACITY",
+  ).pipe(Config.withDefault(defaultDeliveryFlow.deliveryRequestsCapacity)),
   deliveryEventsCapacity: Config.schema(
     PositiveInteger,
     "RELAY_DELIVERY_EVENTS_CAPACITY",

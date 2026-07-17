@@ -8,6 +8,7 @@ import { DeliveryEvents } from "./deliveryEvents.ts"
 import {
   DeliverySupervisor,
   type DeliveryConcurrencyMetrics,
+  type DeliveryLoadMetrics,
 } from "./deliverySupervisor.ts"
 import type { Fetch } from "./destinationClient.ts"
 import { makeRelayApplicationLayer } from "./layers.ts"
@@ -22,6 +23,7 @@ export interface RelayApplication {
   readonly deliveryResults: Stream.Stream<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
+  readonly loadMetrics: () => Promise<DeliveryLoadMetrics>
   readonly shutdown: () => Promise<void>
 }
 
@@ -44,6 +46,13 @@ const concurrencyMetrics = Effect.fn(
 )(function* () {
   const supervisor = yield* DeliverySupervisor
   return yield* supervisor.concurrencyMetrics()
+})
+
+const loadMetrics = Effect.fn(
+  "Relay.loadMetrics",
+)(function* () {
+  const supervisor = yield* DeliverySupervisor
+  return yield* supervisor.loadMetrics()
 })
 
 const deliveryResults = Effect.fn(
@@ -88,6 +97,7 @@ export const startRelayApplication = async (options: {
       deliveryResults: results,
       deliver: (candidate) =>
         runtime.runPromise(deliverConfiguredCandidate(candidate)),
+      loadMetrics: () => runtime.runPromise(loadMetrics()),
       shutdown,
     }
   } catch (error) {
