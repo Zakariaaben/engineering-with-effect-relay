@@ -112,14 +112,14 @@ export const observeDeliveryAttempt = Effect.fn(
 
 const makeRetrySchedule = (
   resilience: DeliveryResilience,
-  deliveryStartedAtMillis: number,
+  deliveryStartedAtNanos: bigint,
   onRetry: (
     attempt: AttemptObservation,
     delayMillis: number,
   ) => Effect.Effect<void>,
 ) => {
-  const maxElapsedMillis = Duration.toMillis(resilience.maxElapsed)
-  const deadline = deliveryStartedAtMillis + maxElapsedMillis
+  const deadline = deliveryStartedAtNanos +
+    Duration.toNanosUnsafe(resilience.maxElapsed)
   const cappedBackoff = Schedule.min([
     Schedule.exponential(resilience.baseDelay),
     Schedule.spaced(resilience.maxDelay),
@@ -150,18 +150,24 @@ const makeRetrySchedule = (
       )
     }),
     Schedule.modifyDelay(({ duration }) =>
-      Clock.currentTimeMillis.pipe(
+      Clock.currentTimeNanos.pipe(
         Effect.map((now) =>
           Duration.min(
             duration,
-            Duration.millis(Math.max(0, deadline - now)),
+            Duration.nanos(
+              now < deadline ? deadline - now : 0n,
+            ),
           ),
         ),
       ),
     ),
     Schedule.upTo({ times: resilience.maxAttempts - 1 }),
-    Schedule.while(({ duration, now }) =>
-      now + Duration.toMillis(duration) < deadline,
+    Schedule.while(({ duration }) =>
+      Clock.currentTimeNanos.pipe(
+        Effect.map((now) =>
+          now + Duration.toNanosUnsafe(duration) < deadline,
+        ),
+      ),
     ),
     Schedule.tap(({ duration, input }) =>
       onRetry(input.attempt, Duration.toMillis(duration)),
@@ -180,9 +186,9 @@ export const runDeliveryWithRetry = Effect.fn(
     remaining: Duration.Duration,
   ) => Effect.Effect<AttemptObservation>,
 ) {
-  const deliveryStartedAtMillis = yield* Clock.currentTimeMillis
-  const deadline = deliveryStartedAtMillis +
-    Duration.toMillis(resilience.maxElapsed)
+  const deliveryStartedAtNanos = yield* Clock.currentTimeNanos
+  const deadline = deliveryStartedAtNanos +
+    Duration.toNanosUnsafe(resilience.maxElapsed)
   const nextOrdinal = yield* Ref.make(0)
   const history = yield* Ref.make<ReadonlyArray<DeliveryAttempt>>([])
   const append = (attempt: DeliveryAttempt) =>
@@ -193,11 +199,13 @@ export const runDeliveryWithRetry = Effect.fn(
       nextOrdinal,
       (current) => current + 1,
     )
-    const attemptStartedAtMillis = yield* Clock.currentTimeMillis
+    const attemptStartedAtNanos = yield* Clock.currentTimeNanos
     const attempt = yield* executeAttempt(
       ordinal,
-      Duration.millis(
-        Math.max(0, deadline - attemptStartedAtMillis),
+      Duration.nanos(
+        attemptStartedAtNanos < deadline
+          ? deadline - attemptStartedAtNanos
+          : 0n,
       ),
     )
     if (isRetryable(attempt.outcome)) {
@@ -218,7 +226,7 @@ export const runDeliveryWithRetry = Effect.fn(
 
   const schedule = makeRetrySchedule(
     resilience,
-    deliveryStartedAtMillis,
+    deliveryStartedAtNanos,
     (attempt, delayMillis) =>
       append(
         withDecision(
