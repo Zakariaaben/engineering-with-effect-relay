@@ -4,6 +4,7 @@ import {
   AmountCents,
   Delivery,
   DeliveryId,
+  DeliveryState,
   DestinationId,
   EventId,
   InvoiceId,
@@ -22,6 +23,7 @@ describe("C02-02 domain schemas", () => {
       id: DeliveryId.make("dlv-9"),
       eventId: event.id,
       destinationId: DestinationId.make("dst-3"),
+      state: DeliveryState.cases.Pending.make({}),
     })
 
     expect(Number(event.amountCents)).toBe(2_500)
@@ -43,6 +45,7 @@ describe("C02-02 domain schemas", () => {
         id: "dlv-9",
         eventId: event.id,
         destinationId: "dst-3",
+        state: { _tag: "Pending" },
       }),
     )
 

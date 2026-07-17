@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Data, Effect, Schema } from "effect"
 
 export const EventId = Schema.String.check(
   Schema.isPattern(/^evt-[a-z0-9]+(?:-[a-z0-9]+)*$/),
@@ -38,12 +38,24 @@ export const RelayEvent = Schema.Struct({
   amountCents: AmountCents,
 })
 
+export const DeliveryState = Schema.TaggedUnion({
+  Pending: {},
+  Delivered: {
+    status: Schema.Int,
+  },
+  Rejected: {
+    status: Schema.Int,
+  },
+})
+export type DeliveryState = Schema.Schema.Type<typeof DeliveryState>
+
 export interface Delivery extends Schema.Schema.Type<typeof Delivery> {}
 
 export const Delivery = Schema.Struct({
   id: DeliveryId,
   eventId: EventId,
   destinationId: DestinationId,
+  state: DeliveryState,
 })
 
 export const decodeRelayEvent = Schema.decodeUnknownEffect(RelayEvent)
@@ -61,33 +73,48 @@ export interface Destination {
   readonly authorization: string
 }
 
-export type DeliveryOutcome =
-  | {
-      readonly _tag: "Delivered"
-      readonly destinationId: DestinationId
-      readonly status: number
-    }
-  | {
-      readonly _tag: "Rejected"
-      readonly destinationId: DestinationId
-      readonly status: number
-    }
+export type DeliveryOutcome = Data.TaggedEnum<{
+  Delivered: {
+    readonly destinationId: DestinationId
+    readonly status: number
+  }
+  Rejected: {
+    readonly destinationId: DestinationId
+    readonly status: number
+  }
+}>
+
+export const DeliveryOutcome = Data.taggedEnum<DeliveryOutcome>()
 
 export const classifyDeliveryStatus = (
   destinationId: DestinationId,
   status: number,
 ): DeliveryOutcome =>
   status >= 200 && status < 300
-    ? {
-        _tag: "Delivered",
+    ? DeliveryOutcome.Delivered({
         destinationId,
         status,
-      }
-    : {
-        _tag: "Rejected",
+      })
+    : DeliveryOutcome.Rejected({
         destinationId,
         status,
-      }
+      })
+
+export const transitionDeliveryState = (
+  current: DeliveryState,
+  outcome: DeliveryOutcome,
+): DeliveryState =>
+  DeliveryState.match<DeliveryState>(current, {
+    Pending: () =>
+      DeliveryOutcome.$match(outcome, {
+        Delivered: ({ status }) =>
+          DeliveryState.cases.Delivered.make({ status }),
+        Rejected: ({ status }) =>
+          DeliveryState.cases.Rejected.make({ status }),
+      }),
+    Delivered: () => current,
+    Rejected: () => current,
+  })
 
 export interface DeliveryRequest {
   readonly endpoint: URL
