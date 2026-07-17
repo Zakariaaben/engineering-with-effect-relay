@@ -11,7 +11,9 @@ root course `AGENTS.md` and `course/RELAY_PROJECT_SPEC.md`.
 
 - Require a concrete chapter ID before changing application code.
 - Start from the previous accepted checkpoint on `main`.
-- Use `chapter/<lowercase-chapter-id>-<short-slug>` for chapter work.
+- Use the same `chapter/<lowercase-chapter-id>-<short-slug>` as the course
+  repository. One chapter gets one branch; individual examples and authoring
+  steps do not get separate branches.
 - Add a deterministic reproduction before the repair when practical.
 - Keep commits coherent and the branch buildable.
 - Run the focused chapter tests and the complete suite before handoff.
