@@ -67,11 +67,13 @@ export const encodeRelayEventJson = Schema.encodeEffect(
   RelayEventFromJson,
 )
 
-export interface Destination {
-  readonly id: DestinationId
-  readonly endpoint: URL
-  readonly authorization: string
-}
+export interface Destination extends Schema.Schema.Type<typeof Destination> {}
+
+export const Destination = Schema.Struct({
+  id: DestinationId,
+  endpoint: Schema.URL,
+  authorization: Schema.Redacted(Schema.String),
+})
 
 export type DeliveryOutcome = Data.TaggedEnum<{
   Delivered: {
@@ -118,7 +120,7 @@ export const transitionDeliveryState = (
 
 export interface DeliveryRequest {
   readonly endpoint: URL
-  readonly authorization: string
+  readonly authorization: Destination["authorization"]
   readonly body: string
 }
 

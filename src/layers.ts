@@ -9,6 +9,7 @@ import type {
   DeliveryId,
 } from "./model.ts"
 import { DeliveryRepository } from "./services.ts"
+import { AppConfigurationLive } from "./configuration.ts"
 
 export const destinationClientFromFetch = (fetch: Fetch) =>
   Layer.succeed(
@@ -40,4 +41,10 @@ export const makeRelayAdapterLayer = (fetch: Fetch) =>
   Layer.mergeAll(
     destinationClientFromFetch(fetch),
     DeliveryRepositoryMemory,
+  )
+
+export const makeRelayApplicationLayer = (fetch: Fetch) =>
+  Layer.merge(
+    makeRelayAdapterLayer(fetch),
+    AppConfigurationLive,
   )
