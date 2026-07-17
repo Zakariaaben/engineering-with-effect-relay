@@ -7,7 +7,10 @@ import {
   ManagedRuntime,
   Redacted,
 } from "effect"
-import { AppConfiguration } from "../src/configuration.ts"
+import {
+  AppConfiguration,
+  defaultDeliveryResilience,
+} from "../src/configuration.ts"
 import {
   DeliverySupervisor,
   DeliverySupervisorLive,
@@ -39,7 +42,11 @@ const makeSupervisorRuntime = (
   const dependencies = Layer.mergeAll(
     Layer.succeed(
       AppConfiguration,
-      AppConfiguration.of({ destination: destinationA, concurrency }),
+      AppConfiguration.of({
+        destination: destinationA,
+        concurrency,
+        resilience: defaultDeliveryResilience,
+      }),
     ),
     Layer.succeed(
       DestinationClient,

@@ -1,12 +1,15 @@
 import { Context, Redacted } from "effect"
-import type { DeliveryRequest } from "./model.ts"
+import type {
+  DeliveryRequest,
+  DeliveryResponseEvidence,
+} from "./model.ts"
 
 export class DestinationClient extends Context.Service<DestinationClient, {
   readonly post: (
     request: DeliveryRequest & {
       readonly signal: AbortSignal
     },
-  ) => Promise<number>
+  ) => Promise<number | DeliveryResponseEvidence>
 }>()("Relay/DestinationClient") {}
 
 export type DestinationClientService =
@@ -14,6 +17,9 @@ export type DestinationClientService =
 
 interface HttpResponse {
   readonly status: number
+  readonly headers?: {
+    readonly get: (name: string) => string | null
+  }
   readonly body: {
     readonly cancel: () => Promise<void>
   } | null
@@ -47,7 +53,10 @@ export const makeFetchDestinationClient = (
     })
 
     try {
-      return response.status
+      const retryAfter = response.headers?.get("retry-after")
+      return retryAfter === null || retryAfter === undefined
+        ? { status: response.status }
+        : { status: response.status, retryAfter }
     } finally {
       await response.body?.cancel()
     }

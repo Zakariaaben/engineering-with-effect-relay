@@ -6,8 +6,10 @@ import {
 } from "../src/destinationClient.ts"
 import { sendDelivery } from "../src/effectSender.ts"
 import {
+  classifyDeliveryResponse,
   classifyDeliveryStatus,
   DeliveryId,
+  parseRetryAfterMillis,
 } from "../src/model.ts"
 import {
   delivery,
@@ -88,5 +90,28 @@ describe("C05-06 delivery outcomes", () => {
       { key: '"dlv-2"', method: "POST", redirect: "manual" },
     ])
     expect(remoteEffects).toBe(2)
+  })
+
+  it("turns Retry-After evidence into a provider delay", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z")
+
+    expect(parseRetryAfterMillis("3", now)).toBe(3_000)
+    expect(
+      parseRetryAfterMillis("Thu, 01 Jan 2026 00:00:05 GMT", now),
+    ).toBe(5_000)
+    expect(parseRetryAfterMillis("not-a-delay", now)).toBeUndefined()
+    expect(
+      classifyDeliveryResponse(
+        destination.id,
+        { status: 429, retryAfter: "3" },
+        now,
+      ),
+    ).toEqual({
+      _tag: "Retryable",
+      destinationId: destination.id,
+      status: 429,
+      reason: "RateLimited",
+      retryAfterMillis: 3_000,
+    })
   })
 })

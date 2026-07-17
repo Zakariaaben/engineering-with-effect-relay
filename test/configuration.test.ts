@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 import {
   Config,
   ConfigProvider,
+  Duration,
   Effect,
   Redacted,
 } from "effect"
@@ -42,6 +43,27 @@ describe("C03-07 application configuration", () => {
       global: 64,
       perDestination: 4,
     })
+    expect({
+      attemptTimeout: Duration.toMillis(
+        configuration.resilience.attemptTimeout,
+      ),
+      maxAttempts: configuration.resilience.maxAttempts,
+      maxElapsed: Duration.toMillis(
+        configuration.resilience.maxElapsed,
+      ),
+      baseDelay: Duration.toMillis(
+        configuration.resilience.baseDelay,
+      ),
+      maxDelay: Duration.toMillis(
+        configuration.resilience.maxDelay,
+      ),
+    }).toEqual({
+      attemptTimeout: 30_000,
+      maxAttempts: 8,
+      maxElapsed: 86_400_000,
+      baseDelay: 1_000,
+      maxDelay: 900_000,
+    })
   })
 
   it("loads positive concurrency limits", async () => {
@@ -71,6 +93,60 @@ describe("C03-07 application configuration", () => {
 
     expect(error).toBeInstanceOf(Config.ConfigError)
     expect(error.message).toContain("RELAY_GLOBAL_CONCURRENCY")
+    expect(error.message).not.toContain("must-not-leak")
+  })
+
+  it("loads a finite bounded retry policy", async () => {
+    const configuration = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
+        RELAY_ATTEMPT_TIMEOUT: "2 seconds",
+        RELAY_RETRY_MAX_ATTEMPTS: 3,
+        RELAY_RETRY_MAX_ELAPSED: "1 minute",
+        RELAY_RETRY_BASE_DELAY: "250 millis",
+        RELAY_RETRY_MAX_DELAY: "5 seconds",
+      }),
+    )
+
+    expect({
+      attemptTimeout: Duration.toMillis(
+        configuration.resilience.attemptTimeout,
+      ),
+      maxAttempts: configuration.resilience.maxAttempts,
+      maxElapsed: Duration.toMillis(
+        configuration.resilience.maxElapsed,
+      ),
+      baseDelay: Duration.toMillis(
+        configuration.resilience.baseDelay,
+      ),
+      maxDelay: Duration.toMillis(
+        configuration.resilience.maxDelay,
+      ),
+    }).toEqual({
+      attemptTimeout: 2_000,
+      maxAttempts: 3,
+      maxElapsed: 60_000,
+      baseDelay: 250,
+      maxDelay: 5_000,
+    })
+  })
+
+  it.each([
+    ["RELAY_RETRY_MAX_ATTEMPTS", 0],
+    ["RELAY_ATTEMPT_TIMEOUT", "0 seconds"],
+    ["RELAY_RETRY_MAX_ELAPSED", "-1 second"],
+  ] as const)("rejects invalid retry setting %s", async (key, value) => {
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        [key]: value,
+      }).pipe(Effect.flip),
+    )
+
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain(key)
     expect(error.message).not.toContain("must-not-leak")
   })
 
