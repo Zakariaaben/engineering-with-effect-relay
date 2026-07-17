@@ -5,6 +5,7 @@ import {
   PubSub,
   Stream,
 } from "effect"
+import { AppConfiguration } from "./configuration.ts"
 import type { DeliveryResult } from "./model.ts"
 
 export class DeliveryEvents extends Context.Service<DeliveryEvents, {
@@ -17,8 +18,11 @@ export class DeliveryEvents extends Context.Service<DeliveryEvents, {
 export const DeliveryEventsLive = Layer.effect(
   DeliveryEvents,
   Effect.gen(function* () {
+    const configuration = yield* AppConfiguration
     const pubsub = yield* Effect.acquireRelease(
-      PubSub.unbounded<DeliveryResult>(),
+      PubSub.bounded<DeliveryResult>(
+        configuration.flow.deliveryEventsCapacity,
+      ),
       PubSub.shutdown,
     )
     const publish = Effect.fn("DeliveryEvents.publish")(

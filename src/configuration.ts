@@ -23,6 +23,10 @@ export interface DeliveryResilience {
   readonly maxDelay: Duration.Duration
 }
 
+export interface DeliveryFlow {
+  readonly deliveryEventsCapacity: number
+}
+
 export const defaultDeliveryResilience: DeliveryResilience = {
   attemptTimeout: Duration.seconds(30),
   maxAttempts: 8,
@@ -31,9 +35,14 @@ export const defaultDeliveryResilience: DeliveryResilience = {
   maxDelay: Duration.minutes(15),
 }
 
+export const defaultDeliveryFlow: DeliveryFlow = {
+  deliveryEventsCapacity: 64,
+}
+
 export class AppConfiguration extends Context.Service<AppConfiguration, {
   readonly destination: Destination
   readonly concurrency: DeliveryConcurrency
+  readonly flow: DeliveryFlow
   readonly resilience: DeliveryResilience
 }>()("Relay/AppConfiguration") {}
 
@@ -46,7 +55,7 @@ const destination = Config.all({
   authorization: Config.redacted("RELAY_DESTINATION_AUTHORIZATION"),
 })
 
-const ConcurrencyLimit = Schema.Int.check(Schema.isGreaterThan(0))
+const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const PositiveFiniteDuration = Schema.DurationFromString.check(
   Schema.makeFilter(
     (duration) =>
@@ -58,13 +67,20 @@ const PositiveFiniteDuration = Schema.DurationFromString.check(
 
 const concurrency = Config.all({
   global: Config.schema(
-    ConcurrencyLimit,
+    PositiveInteger,
     "RELAY_GLOBAL_CONCURRENCY",
   ).pipe(Config.withDefault(64)),
   perDestination: Config.schema(
-    ConcurrencyLimit,
+    PositiveInteger,
     "RELAY_DESTINATION_CONCURRENCY",
   ).pipe(Config.withDefault(4)),
+})
+
+const flow = Config.all({
+  deliveryEventsCapacity: Config.schema(
+    PositiveInteger,
+    "RELAY_DELIVERY_EVENTS_CAPACITY",
+  ).pipe(Config.withDefault(defaultDeliveryFlow.deliveryEventsCapacity)),
 })
 
 const resilience = Config.all({
@@ -73,7 +89,7 @@ const resilience = Config.all({
     "RELAY_ATTEMPT_TIMEOUT",
   ).pipe(Config.withDefault(defaultDeliveryResilience.attemptTimeout)),
   maxAttempts: Config.schema(
-    ConcurrencyLimit,
+    PositiveInteger,
     "RELAY_RETRY_MAX_ATTEMPTS",
   ).pipe(Config.withDefault(defaultDeliveryResilience.maxAttempts)),
   maxElapsed: Config.schema(
@@ -92,11 +108,12 @@ const resilience = Config.all({
 
 export const AppConfigurationLive = Layer.effect(
   AppConfiguration,
-  Config.all({ destination, concurrency, resilience }).pipe(
-    Config.map(({ concurrency, destination, resilience }) =>
+  Config.all({ destination, concurrency, flow, resilience }).pipe(
+    Config.map(({ concurrency, destination, flow, resilience }) =>
       AppConfiguration.of({
         concurrency,
         destination: Destination.make(destination),
+        flow,
         resilience,
       })
     ),
