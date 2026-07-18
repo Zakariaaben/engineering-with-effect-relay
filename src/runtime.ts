@@ -7,6 +7,7 @@ import {
   Layer,
   ManagedRuntime,
   Stream,
+  Tracer,
 } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as HttpServer from "effect/unstable/http/HttpServer"
@@ -82,20 +83,27 @@ export const startRelayApplication = async (options: {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>
   readonly httpServerLayer?: RelayHttpServerLayer
   readonly persistenceLayer?: RelayPersistenceLayer
+  readonly tracer?: Tracer.Tracer
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
 }): Promise<RelayApplication> => {
-  const runtime = ManagedRuntime.make(
-    makeRelayHttpApplicationLayer(
-      options.httpClientLayer ?? NodeHttpClient.layerNodeHttp,
-      options.httpServerLayer ?? NodeHttpServer.layer(
-        Http.createServer,
-        { host: "127.0.0.1", port: 3_000 },
-      ),
-      options.configProvider,
-      options.persistenceLayer ?? RelayPersistenceLive,
+  const applicationLayer = makeRelayHttpApplicationLayer(
+    options.httpClientLayer ?? NodeHttpClient.layerNodeHttp,
+    options.httpServerLayer ?? NodeHttpServer.layer(
+      Http.createServer,
+      { host: "127.0.0.1", port: 3_000 },
     ),
+    options.configProvider,
+    options.persistenceLayer ?? RelayPersistenceLive,
   )
+  const runtimeLayer = options.tracer === undefined
+    ? applicationLayer
+    : applicationLayer.pipe(
+      Layer.provideMerge(
+        Layer.succeed(Tracer.Tracer, options.tracer),
+      ),
+    )
+  const runtime = ManagedRuntime.make(runtimeLayer)
   let removeShutdownHook = () => {}
   let shutdownPromise: Promise<void> | undefined
   const shutdown = (): Promise<void> => {
