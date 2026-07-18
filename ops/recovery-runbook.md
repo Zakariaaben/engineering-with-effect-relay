@@ -30,6 +30,22 @@ token authorizes the action; it does not identify a human operator or create a
 durable audit record. Record the incident and change in the organization’s
 audit system when actor identity or approval history matters.
 
+### Optional delivery analysis
+
+An application host may call Relay's read-only delivery analyst before an
+operator chooses an action. The model receives only the delivery ID,
+destination ID, current state, total attempt count, and the latest 20 attempt
+classifications. It does not receive event payloads, endpoints, credentials,
+claim ownership, or trace IDs.
+
+Treat its summary and two proposed checks as navigation, not evidence or
+permission. Verify every claim against `deliveryStatus` and the receiver. The
+analyst cannot retry, repair, terminate, or reconcile work. If the model is
+missing, fails, or returns invalid structured output, the host receives a
+deterministic fallback that points back to the ordered history and this
+runbook. Both paths append the returned report to Relay's bounded process-local
+analysis history.
+
 ## Choose one action
 
 | Action | Use when | State change | Route used next |
@@ -92,6 +108,9 @@ stale owners; this endpoint does not bypass the repository’s ownership rules.
 - Actions are one delivery at a time; there is no bulk replay control.
 - The bearer-token fixture has no actor identity, approval workflow, or durable
   administrative audit log.
+- The optional analyst history is process-local, keeps only the latest 100
+  reports, and is lost on restart. Export it to a durable actor-aware audit
+  system before relying on it for compliance or approval evidence.
 - Metrics are process-local until an exporter and fleet-wide aggregation are
   configured. The dashboard queries assume Prometheus-compatible metric names.
 - Repair can replace an endpoint only for the delivery’s existing destination

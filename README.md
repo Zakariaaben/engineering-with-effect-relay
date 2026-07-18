@@ -108,3 +108,18 @@ The [recovery runbook](ops/recovery-runbook.md) connects those decisions to a
 [dashboard query fixture](ops/relay-m9-dashboard.json) and states the remote,
 security, pagination, audit, and metric-export boundaries that remain outside
 this teaching system.
+
+## AI specialist checkpoint
+
+Relay can optionally analyze one delivery's sanitized state, total attempt
+count, and latest 20 attempt classifications through an injected Effect
+`LanguageModel`. The analyst never receives the event payload, destination
+endpoint, authorization, worker identity, claim generation, or trace
+identifiers, and it has no recovery mutation capability.
+Every returned suggestion is recorded in a bounded in-memory audit history.
+When no model is configured or generation fails, Relay returns and records a
+deterministic runbook-oriented fallback instead of making operations depend on
+the provider.
+
+This audit history is process-local and retains only the latest 100 reports. It
+is evidence for the teaching fixture, not a durable organizational audit log.

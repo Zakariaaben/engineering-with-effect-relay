@@ -27,6 +27,12 @@ import {
   type RelayHttpServerLayer,
   type RelayPersistenceLayer,
 } from "./layers.ts"
+import {
+  DeliveryAnalyst,
+  IncidentAnalysisAudit,
+  IncidentAnalysisModel,
+  type IncidentAnalysisReport,
+} from "./incidentAnalyst.ts"
 import type {
   DeliveryResult,
   DeliveryId,
@@ -59,6 +65,12 @@ export interface RelayApplication {
   readonly retryDeadLetter: (id: DeliveryId) => Promise<DeliveryStatus>
   readonly repairDeadLetter: (id: DeliveryId) => Promise<DeliveryStatus>
   readonly terminateDeadLetter: (id: DeliveryId) => Promise<DeliveryStatus>
+  readonly analyzeDelivery: (
+    id: DeliveryId,
+  ) => Promise<IncidentAnalysisReport>
+  readonly incidentAnalysisAuditTrail: () => Promise<
+    ReadonlyArray<IncidentAnalysisReport>
+  >
   readonly deliveryResults: Stream.Stream<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
@@ -145,6 +157,20 @@ const terminateDeadLetter = Effect.fn("Relay.terminateDeadLetter")(
   },
 )
 
+const analyzeDelivery = Effect.fn("Relay.analyzeDelivery")(
+  function* (id: DeliveryId) {
+    const analyst = yield* DeliveryAnalyst
+    return yield* analyst.analyze(id)
+  },
+)
+
+const incidentAnalysisAuditTrail = Effect.fn(
+  "Relay.incidentAnalysisAuditTrail",
+)(function* () {
+  const audit = yield* IncidentAnalysisAudit
+  return yield* audit.history
+})
+
 const httpAddress = Effect.fn("Relay.httpAddress")(function* () {
   const server = yield* HttpServer.HttpServer
   return HttpServer.formatAddress(server.address)
@@ -157,6 +183,14 @@ export const startRelayApplication = async (options: {
   readonly readinessLayer?: Layer.Layer<RelayReadiness>
   readonly workerIdentityLayer?: Layer.Layer<
     WorkerIdentity,
+    unknown
+  >
+  readonly incidentAnalysisModelLayer?: Layer.Layer<
+    IncidentAnalysisModel,
+    unknown
+  >
+  readonly incidentAnalysisAuditLayer?: Layer.Layer<
+    IncidentAnalysisAudit,
     unknown
   >
   readonly tracer?: Tracer.Tracer
@@ -173,6 +207,8 @@ export const startRelayApplication = async (options: {
     options.persistenceLayer ?? RelayPersistenceLive,
     options.readinessLayer ?? RelayReadinessLive,
     options.workerIdentityLayer ?? WorkerIdentityLive,
+    options.incidentAnalysisModelLayer,
+    options.incidentAnalysisAuditLayer,
   )
   const runtimeLayer = options.tracer === undefined
     ? applicationLayer
@@ -217,6 +253,7 @@ export const startRelayApplication = async (options: {
         runtime.runPromise(acceptConfiguredEvent(ingestionKey, candidate)),
       activeDeliveryCount: () =>
         runtime.runPromise(activeDeliveryCount()),
+      analyzeDelivery: (id) => runtime.runPromise(analyzeDelivery(id)),
       concurrencyMetrics: () =>
         runtime.runPromise(concurrencyMetrics()),
       deadLetters: (limit) => runtime.runPromise(deadLetters(limit)),
@@ -228,6 +265,8 @@ export const startRelayApplication = async (options: {
       repairDeadLetter: (id) =>
         runtime.runPromise(repairDeadLetter(id)),
       httpAddress: address,
+      incidentAnalysisAuditTrail: () =>
+        runtime.runPromise(incidentAnalysisAuditTrail()),
       isReady: () =>
         shutdownPromise === undefined
           ? runtime.runPromise(startedReadiness.current)
