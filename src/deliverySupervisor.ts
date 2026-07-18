@@ -21,6 +21,7 @@ import {
   observeDeliveryAttempt,
   runDeliveryWithRetry,
 } from "./deliveryEngine.ts"
+import { makeDeliveryMetrics } from "./deliveryMetrics.ts"
 import { DeliveryEvents } from "./deliveryEvents.ts"
 import { DestinationClient } from "./destinationClient.ts"
 import {
@@ -128,6 +129,15 @@ export const makeDeliverySupervisorLive = (
       globalActive: 0,
       activeByDestination: new Map(),
     })
+    const metrics = makeDeliveryMetrics()
+    yield* metrics.initialize({
+      activeAttempts: 0,
+      activeAttemptLimit: configuration.concurrency.global,
+      admittedDeliveries: 0,
+      admissionCapacity: configuration.flow.deliveryRequestsCapacity,
+      requestQueueDepth: 0,
+      requestQueueCapacity: configuration.flow.deliveryRequestsCapacity,
+    })
 
     const capacityFor = Effect.fn("DeliverySupervisor.capacityFor")(
       function* (destinationId: DestinationId) {
@@ -155,7 +165,7 @@ export const makeDeliverySupervisorLive = (
 
     const adjustActive = Effect.fn("DeliverySupervisor.adjustActive")(
       (destinationId: DestinationId, adjustment: 1 | -1) =>
-        Ref.update(active, (current) => {
+        Ref.updateAndGet(active, (current) => {
           const activeByDestination = new Map(
             current.activeByDestination,
           )
@@ -172,7 +182,11 @@ export const makeDeliverySupervisorLive = (
             globalActive: current.globalActive + adjustment,
             activeByDestination,
           }
-        }),
+        }).pipe(
+          Effect.tap((current) =>
+            metrics.setActiveAttempts(current.globalActive)
+          ),
+        ),
     )
 
     const trackActive = <A, E, R>(
@@ -232,6 +246,7 @@ export const makeDeliverySupervisorLive = (
                 ),
               ),
             ),
+          metrics.recordAttempt,
         )
         return yield* task.pipe(
           Effect.annotateLogs({
@@ -297,7 +312,10 @@ export const makeDeliverySupervisorLive = (
 
     const overload = Effect.fn("DeliverySupervisor.overload")(
       (destinationId: DestinationId) =>
-        Ref.update(rejected, (count) => count + 1).pipe(
+        Effect.all([
+          Ref.update(rejected, (count) => count + 1),
+          metrics.recordAdmissionRejection,
+        ], { discard: true }).pipe(
           Effect.andThen(
             Effect.fail(
               new DeliveryOverloaded({
@@ -312,9 +330,14 @@ export const makeDeliverySupervisorLive = (
 
     const trackAdmitted = <A, E, R>(task: Effect.Effect<A, E, R>) =>
       Effect.acquireUseRelease(
-        Ref.update(admitted, (count) => count + 1),
+        Ref.updateAndGet(admitted, (count) => count + 1).pipe(
+          Effect.tap(metrics.setAdmittedDeliveries),
+        ),
         () => task,
-        () => Ref.update(admitted, (count) => count - 1),
+        () =>
+          Ref.updateAndGet(admitted, (count) => count - 1).pipe(
+            Effect.tap(metrics.setAdmittedDeliveries),
+          ),
       )
 
     const deliverTo = Effect.fn("DeliverySupervisor.deliverTo")(
@@ -409,7 +432,7 @@ export const makeDeliverySupervisorLive = (
       "DeliverySupervisor.loadMetrics",
     )(function* () {
       const concurrency = yield* Ref.get(active)
-      return {
+      const snapshot = {
         ...concurrency,
         activeDeliveries: yield* FiberSet.size(deliveries),
         admittedDeliveries: yield* Ref.get(admitted),
@@ -421,6 +444,15 @@ export const makeDeliverySupervisorLive = (
           configuration.flow.deliveryRequestsCapacity,
         requestQueueDepth: yield* Queue.size(requests),
       }
+      yield* metrics.setSaturation({
+        activeAttempts: snapshot.globalActive,
+        activeAttemptLimit: snapshot.globalConcurrencyLimit,
+        admittedDeliveries: snapshot.admittedDeliveries,
+        admissionCapacity: snapshot.requestQueueCapacity,
+        requestQueueDepth: snapshot.requestQueueDepth,
+        requestQueueCapacity: snapshot.requestQueueCapacity,
+      })
+      return snapshot
     })
 
     return DeliverySupervisor.of({

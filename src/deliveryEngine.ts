@@ -213,6 +213,9 @@ export const runDeliveryWithRetry = Effect.fn(
     ordinal: number,
     remaining: Duration.Duration,
   ) => Effect.Effect<AttemptObservation>,
+  onAttempt: (
+    attempt: DeliveryAttempt,
+  ) => Effect.Effect<void> = () => Effect.void,
 ) {
   const deliveryStartedAtNanos = yield* Clock.currentTimeNanos
   const deadline = deliveryStartedAtNanos +
@@ -222,6 +225,7 @@ export const runDeliveryWithRetry = Effect.fn(
   const append = (attempt: DeliveryAttempt) =>
     Ref.update(history, (current) => [...current, attempt]).pipe(
       Effect.andThen(logDeliveryAttempt(attempt)),
+      Effect.andThen(onAttempt(attempt)),
     )
 
   const execute = Effect.gen(function* () {
