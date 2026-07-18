@@ -22,7 +22,7 @@ import {
   type DestinationId,
 } from "./model.ts"
 
-interface AttemptObservation {
+export interface AttemptObservation {
   readonly ordinal: number
   readonly startedAtMillis: number
   readonly completedAtMillis: number

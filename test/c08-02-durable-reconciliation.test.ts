@@ -96,7 +96,29 @@ const makePersistenceLayer = (
     findById: (id) =>
       Effect.sync(() => Option.fromNullishOr(state.deliveries.get(id))),
     findStatus: () => Effect.succeed(Option.none()),
-    recordAttempt: () => Effect.void,
+    recordAttempt: (attempt) =>
+      Effect.gen(function* () {
+        if (
+          attempt.decision !== "Terminal" ||
+          attempt.outcome !== "Delivered" ||
+          attempt.status === null
+        ) {
+          return
+        }
+        const current = state.deliveries.get(attempt.deliveryId)
+        if (current === undefined) return
+        const completed = Delivery.make({
+          ...current,
+          state: DeliveryState.cases.Delivered.make({
+            status: attempt.status,
+          }),
+        })
+        state.deliveries.set(attempt.deliveryId, completed)
+        state.claims.delete(attempt.deliveryId)
+        if (options.onComplete !== undefined) {
+          yield* options.onComplete(completed)
+        }
+      }),
     listDeadLetters: () => Effect.succeed([]),
     retryDeadLetter: () => Effect.void,
     claimPending: (ownerId, destinationId, limit, leaseDurationMillis) =>
