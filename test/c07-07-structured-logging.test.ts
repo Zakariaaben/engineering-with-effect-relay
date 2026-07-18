@@ -4,6 +4,7 @@ import { Effect, Layer, Logger, Redacted } from "effect"
 import {
   AppConfiguration,
   defaultDeliveryFlow,
+  defaultDeliveryRecovery,
   defaultDeliveryResilience,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
@@ -54,6 +55,7 @@ describe("C07-07 structured delivery logs", () => {
           destination,
           concurrency: { global: 2, perDestination: 1 },
           flow: defaultDeliveryFlow,
+          recovery: defaultDeliveryRecovery,
           resilience: {
             ...defaultDeliveryResilience,
             maxAttempts: 1,

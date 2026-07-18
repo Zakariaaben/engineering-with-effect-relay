@@ -11,6 +11,7 @@ import {
 import {
   AppConfiguration,
   defaultDeliveryFlow,
+  defaultDeliveryRecovery,
   defaultDeliveryResilience,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
@@ -75,6 +76,7 @@ describe("C07-09 delivery metrics", () => {
                   ...defaultDeliveryFlow,
                   deliveryRequestsCapacity: 4,
                 },
+                recovery: defaultDeliveryRecovery,
                 resilience: defaultDeliveryResilience,
               }),
             ),

@@ -28,6 +28,11 @@ export interface DeliveryFlow {
   readonly deliveryEventsCapacity: number
 }
 
+export interface DeliveryRecovery {
+  readonly claimBatchSize: number
+  readonly pollInterval: Duration.Duration
+}
+
 export const defaultDeliveryResilience: DeliveryResilience = {
   attemptTimeout: Duration.seconds(30),
   maxAttempts: 8,
@@ -41,10 +46,16 @@ export const defaultDeliveryFlow: DeliveryFlow = {
   deliveryEventsCapacity: 64,
 }
 
+export const defaultDeliveryRecovery: DeliveryRecovery = {
+  claimBatchSize: 64,
+  pollInterval: Duration.seconds(1),
+}
+
 export class AppConfiguration extends Context.Service<AppConfiguration, {
   readonly destination: Destination
   readonly concurrency: DeliveryConcurrency
   readonly flow: DeliveryFlow
+  readonly recovery: DeliveryRecovery
   readonly resilience: DeliveryResilience
 }>()("Relay/AppConfiguration") {}
 
@@ -112,14 +123,26 @@ const resilience = Config.all({
   ).pipe(Config.withDefault(defaultDeliveryResilience.maxDelay)),
 })
 
+const recovery = Config.all({
+  claimBatchSize: Config.schema(
+    PositiveInteger,
+    "RELAY_RECOVERY_CLAIM_BATCH_SIZE",
+  ).pipe(Config.withDefault(defaultDeliveryRecovery.claimBatchSize)),
+  pollInterval: Config.schema(
+    PositiveFiniteDuration,
+    "RELAY_RECOVERY_POLL_INTERVAL",
+  ).pipe(Config.withDefault(defaultDeliveryRecovery.pollInterval)),
+})
+
 export const AppConfigurationLive = Layer.effect(
   AppConfiguration,
-  Config.all({ destination, concurrency, flow, resilience }).pipe(
-    Config.map(({ concurrency, destination, flow, resilience }) =>
+  Config.all({ destination, concurrency, flow, recovery, resilience }).pipe(
+    Config.map(({ concurrency, destination, flow, recovery, resilience }) =>
       AppConfiguration.of({
         concurrency,
         destination: Destination.make(destination),
         flow,
+        recovery,
         resilience,
       })
     ),

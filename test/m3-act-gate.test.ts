@@ -10,6 +10,7 @@ import {
 import {
   AppConfiguration,
   defaultDeliveryFlow,
+  defaultDeliveryRecovery,
   defaultDeliveryResilience,
 } from "../src/configuration.ts"
 import {
@@ -49,6 +50,7 @@ const makeSupervisorRuntime = (
         destination: destinationA,
         concurrency,
         flow: defaultDeliveryFlow,
+        recovery: defaultDeliveryRecovery,
         resilience: defaultDeliveryResilience,
       }),
     ),

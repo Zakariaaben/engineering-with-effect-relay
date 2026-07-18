@@ -53,13 +53,15 @@ export const makeRelayIntakeStoreSql = (
               event_id,
               destination_id,
               state,
-              status
+              status,
+              claimed
             ) VALUES (
               ${row.delivery_id},
               ${row.event_id},
               ${row.destination_id},
               ${row.state},
-              ${row.status}
+              ${row.status},
+              TRUE
             )
           `
 

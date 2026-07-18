@@ -36,8 +36,24 @@ export const createRelayTables = Effect.gen(function* () {
   `
 })
 
+export const addDeliveryClaims = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  yield* sql`
+    ALTER TABLE deliveries
+    ADD COLUMN claimed boolean NOT NULL DEFAULT FALSE
+  `
+
+  yield* sql`
+    CREATE INDEX deliveries_recovery_idx
+    ON deliveries (destination_id, delivery_id)
+    WHERE state = 'Pending' AND claimed = FALSE
+  `
+})
+
 export const RelayMigrations = Migrator.fromRecord({
   "0001_create_relay_tables": createRelayTables,
+  "0002_add_delivery_claims": addDeliveryClaims,
 })
 
 export const RelayMigrationsLive = Layer.effectDiscard(

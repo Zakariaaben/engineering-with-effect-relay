@@ -10,6 +10,7 @@ import {
 import {
   AppConfiguration,
   defaultDeliveryFlow,
+  defaultDeliveryRecovery,
   defaultDeliveryResilience,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
@@ -74,6 +75,7 @@ describe("C06-15 M5 act gate", () => {
                   ...defaultDeliveryFlow,
                   deliveryRequestsCapacity: admissionCapacity,
                 },
+                recovery: defaultDeliveryRecovery,
                 resilience: defaultDeliveryResilience,
               }),
             ),

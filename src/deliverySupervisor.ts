@@ -27,6 +27,7 @@ import { DestinationClient } from "./destinationClient.ts"
 import {
   DeliveryIdentityError,
   DeliveryOverloaded,
+  type DeliveryRepositoryError,
   type InvalidEventError,
   type RelayIntakeStoreError,
 } from "./errors.ts"
@@ -40,7 +41,11 @@ import type {
   DestinationId,
   RelayEvent,
 } from "./model.ts"
-import { RelayIntakeStore } from "./services.ts"
+import {
+  DeliveryRepository,
+  RelayIntakeStore,
+  type ClaimedDelivery,
+} from "./services.ts"
 import { decodeIncomingEvent } from "./workflow.ts"
 
 type DeliveryExecutionFailure =
@@ -50,6 +55,7 @@ type DeliveryExecutionFailure =
 type DeliveryFailure =
   | DeliveryExecutionFailure
   | DeliveryOverloaded
+  | DeliveryRepositoryError
   | RelayIntakeStoreError
 
 interface DeliveryJob {
@@ -60,7 +66,10 @@ interface DeliveryJob {
   readonly event: RelayEvent
   readonly parentSpan: Option.Option<Tracer.AnySpan>
   readonly random: Context.Service.Shape<typeof Random.Random>
-  readonly result: Deferred.Deferred<DeliveryResult>
+  readonly result: Deferred.Deferred<
+    DeliveryResult,
+    DeliveryRepositoryError
+  >
 }
 
 export interface DeliverySupervisorHooks {
@@ -92,6 +101,12 @@ export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
     candidate: unknown,
     destination: Destination,
   ) => Effect.Effect<DeliveryResult, DeliveryFailure>
+  readonly resumeClaimed: (
+    claimed: ClaimedDelivery,
+  ) => Effect.Effect<
+    DeliveryResult,
+    DeliveryOverloaded | DeliveryRepositoryError
+  >
   readonly activeCount: () => Effect.Effect<number>
   readonly concurrencyMetrics: () => Effect.Effect<DeliveryConcurrencyMetrics>
   readonly loadMetrics: () => Effect.Effect<DeliveryLoadMetrics>
@@ -107,6 +122,7 @@ export const makeDeliverySupervisorLive = (
     const destinationClient = yield* DestinationClient
     const deliveryEvents = yield* DeliveryEvents
     const intakeStore = yield* RelayIntakeStore
+    const repository = yield* DeliveryRepository
     const deliveries = yield* FiberSet.make<void>()
     const requests = yield* Effect.acquireRelease(
       Queue.dropping<DeliveryJob>(
@@ -267,7 +283,7 @@ export const makeDeliverySupervisorLive = (
           "relay.destination_id": job.destination.id,
         })
         const wasCancelled = yield* Deferred.isDone(job.cancelled)
-        const exit = yield* (
+        const execution = (
           wasCancelled
             ? Effect.interrupt
             : Effect.raceFirst(
@@ -283,7 +299,18 @@ export const makeDeliverySupervisorLive = (
                   Effect.andThen(Effect.interrupt),
                 ),
               )
-        ).pipe(Effect.exit)
+        ).pipe(
+          Effect.tap((result) =>
+            repository.completeClaim(job.deliveryId, result)
+          ),
+          Effect.catchCause((cause) =>
+            repository.releaseClaim(job.deliveryId).pipe(
+              Effect.ignore,
+              Effect.andThen(Effect.failCause(cause)),
+            )
+          ),
+        )
+        const exit = yield* Effect.exit(execution)
 
         yield* Deferred.done(job.result, exit)
       },
@@ -340,6 +367,48 @@ export const makeDeliverySupervisorLive = (
           ),
       )
 
+    const submitClaimed = Effect.fn("DeliverySupervisor.submitClaimed")(
+      function* (
+        deliveryId: DeliveryId,
+        event: RelayEvent,
+        destination: Destination,
+      ) {
+        const result = yield* Deferred.make<
+          DeliveryResult,
+          DeliveryRepositoryError
+        >()
+        const cancelled = yield* Deferred.make<void>()
+        const clock = yield* Clock.Clock
+        const parentSpan = yield* Effect.option(
+          Effect.currentSpan,
+        )
+        const random = yield* Random.Random
+        const offered = yield* Queue.offer(requests, {
+          cancelled,
+          clock,
+          deliveryId,
+          destination,
+          event,
+          parentSpan,
+          random,
+          result,
+        })
+
+        if (!offered) {
+          yield* repository.releaseClaim(deliveryId)
+          return yield* overload(destination.id)
+        }
+
+        return yield* Deferred.await(result).pipe(
+          Effect.onInterrupt(() =>
+            Deferred.succeed(cancelled, undefined).pipe(
+              Effect.asVoid,
+            )
+          ),
+        )
+      },
+    )
+
     const deliverTo = Effect.fn("DeliverySupervisor.deliverTo")(
       function* (candidate: unknown, destination: Destination) {
         const accepted = yield* admission.withPermitsIfAvailable(1)(
@@ -376,34 +445,10 @@ export const makeDeliverySupervisorLive = (
                 }),
               )
 
-              const result = yield* Deferred.make<DeliveryResult>()
-              const cancelled = yield* Deferred.make<void>()
-              const clock = yield* Clock.Clock
-              const parentSpan = yield* Effect.option(
-                Effect.currentSpan,
-              )
-              const random = yield* Random.Random
-              const offered = yield* Queue.offer(requests, {
-                cancelled,
-                clock,
+              return yield* submitClaimed(
                 deliveryId,
-                destination,
                 event,
-                parentSpan,
-                random,
-                result,
-              })
-
-              if (!offered) {
-                return yield* overload(destination.id)
-              }
-
-              return yield* Deferred.await(result).pipe(
-                Effect.onInterrupt(() =>
-                  Deferred.succeed(cancelled, undefined).pipe(
-                    Effect.asVoid,
-                  )
-                ),
+                destination,
               )
             }),
           ),
@@ -417,6 +462,15 @@ export const makeDeliverySupervisorLive = (
     const deliver = Effect.fn("DeliverySupervisor.deliver")(
       (candidate: unknown) =>
         deliverTo(candidate, configuration.destination),
+    )
+    const resumeClaimed = Effect.fn(
+      "DeliverySupervisor.resumeClaimed",
+    )((claimed: ClaimedDelivery) =>
+      submitClaimed(
+        claimed.delivery.id,
+        claimed.event,
+        configuration.destination,
+      )
     )
     const activeCount = Effect.fn(
       "DeliverySupervisor.activeCount",
@@ -461,6 +515,7 @@ export const makeDeliverySupervisorLive = (
       deliver,
       deliverTo,
       loadMetrics,
+      resumeClaimed,
     })
   }),
 )

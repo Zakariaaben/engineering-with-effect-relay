@@ -72,6 +72,8 @@ const makeHandler = (
     }),
     deliver,
     deliverTo: (candidate) => deliver(candidate),
+    resumeClaimed: () =>
+      Effect.die(new Error("not used by this adapter test")),
     loadMetrics: () => Effect.succeed({
       activeDeliveries: 0,
       admittedDeliveries: 0,
