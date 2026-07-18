@@ -95,3 +95,16 @@ offers excess work, releases one delivery, and submits one replacement. The
 test proves admitted work never exceeds its configured capacity, active work
 never exceeds the per-destination limit, every excess offer is rejected
 visibly, and all accepted work can drain without sleeps or wall-clock guesses.
+
+## M9 checkpoint
+
+Relay now exposes a separately authenticated operations boundary for inspecting
+delivery history, listing dead letters, retrying with the accepted route,
+repairing with the current trusted route, terminating work, and requesting one
+bounded reconciliation pass. Every mutation is conditional on durable state;
+attempt history and claim generations continue across operator replay.
+
+The [recovery runbook](ops/recovery-runbook.md) connects those decisions to a
+[dashboard query fixture](ops/relay-m9-dashboard.json) and states the remote,
+security, pagination, audit, and metric-export boundaries that remain outside
+this teaching system.

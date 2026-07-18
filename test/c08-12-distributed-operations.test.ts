@@ -59,6 +59,7 @@ describe("C08-12 distributed delivery operations", () => {
         RELAY_DESTINATION_ID: "dst-operations",
         RELAY_DESTINATION_URL: "https://hooks.example.test/operations",
         RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+        RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
         RELAY_RETRY_MAX_ATTEMPTS: 1,
       }),
       httpClientLayer: makeHttpClientLayer((request) =>

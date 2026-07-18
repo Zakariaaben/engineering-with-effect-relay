@@ -4,6 +4,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient"
 import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 import {
   ClaimLostError,
+  DeadLetterDestinationMismatchError,
   DeadLetterRecoveryError,
   DeliveryRepositoryError,
 } from "./errors.ts"
@@ -65,6 +66,12 @@ export const DeliveryRow = Schema.Union([
     state: Schema.Literal("DeadLettered"),
     status: Schema.Null,
     dead_letter_reason: DeadLetterReason,
+  }),
+  Schema.Struct({
+    ...DeliveryRowFields,
+    state: Schema.Literal("Terminated"),
+    status: Schema.Null,
+    dead_letter_reason: Schema.Null,
   }),
 ])
 export type DeliveryRow = Schema.Schema.Type<typeof DeliveryRow>
@@ -131,6 +138,16 @@ const DeliveryMutationResult = Schema.Struct({
   delivery_id: DeliveryId,
 })
 
+const DeadLetterRepairRequest = Schema.Struct({
+  delivery_id: DeliveryId,
+  destination_id: DestinationId,
+  destination_url: Schema.String,
+  configuration_version: ConfigurationVersion,
+})
+type DeadLetterRepairRequestEncoded = Schema.Codec.Encoded<
+  typeof DeadLetterRepairRequest
+>
+
 export const deliveryToRow = (delivery: DeliveryValue): DeliveryRow =>
   DeliveryState.match<DeliveryRow>(delivery.state, {
     Pending: () => ({
@@ -165,6 +182,14 @@ export const deliveryToRow = (delivery: DeliveryValue): DeliveryRow =>
       status: null,
       dead_letter_reason: reason,
     }),
+    Terminated: () => ({
+      delivery_id: delivery.id,
+      event_id: delivery.eventId,
+      destination_id: delivery.destinationId,
+      state: "Terminated",
+      status: null,
+      dead_letter_reason: null,
+    }),
   })
 
 export const rowToDelivery = (row: DeliveryRow): DeliveryValue => {
@@ -174,8 +199,12 @@ export const rowToDelivery = (row: DeliveryRow): DeliveryValue => {
     ? DeliveryState.cases.Delivered.make({ status: row.status })
     : row.state === "Rejected"
     ? DeliveryState.cases.Rejected.make({ status: row.status })
-    : DeliveryState.cases.DeadLettered.make({
+    : row.state === "DeadLettered"
+    ? DeliveryState.cases.DeadLettered.make({
         reason: row.dead_letter_reason,
+      })
+    : DeliveryState.cases.Terminated.make({
+        reason: "OperatorTerminated",
       })
 
   return Delivery.make({
@@ -350,6 +379,12 @@ export interface DeliverySqlStatements<E = never> {
   readonly retryDeadLetter: (
     id: string,
   ) => Effect.Effect<ReadonlyArray<unknown>, E>
+  readonly repairDeadLetter: (
+    request: DeadLetterRepairRequestEncoded,
+  ) => Effect.Effect<ReadonlyArray<unknown>, E>
+  readonly terminateDeadLetter: (
+    id: string,
+  ) => Effect.Effect<ReadonlyArray<unknown>, E>
   readonly claimPending: (
     request: DeliveryClaimRequestEncoded,
   ) => Effect.Effect<ReadonlyArray<unknown>, E>
@@ -372,6 +407,8 @@ const repositoryError = (
     | "recordAttempt"
     | "listDeadLetters"
     | "retryDeadLetter"
+    | "repairDeadLetter"
+    | "terminateDeadLetter"
     | "claimPending"
     | "renewClaim"
     | "completeClaim"
@@ -422,6 +459,16 @@ export const makeDeliveryRepositorySql = <E>(
     Request: DeliveryId,
     Result: DeliveryMutationResult,
     execute: statements.retryDeadLetter,
+  })
+  const repairDeadLetterRow = SqlSchema.findOneOption({
+    Request: DeadLetterRepairRequest,
+    Result: DeliveryMutationResult,
+    execute: statements.repairDeadLetter,
+  })
+  const terminateDeadLetterRow = SqlSchema.findOneOption({
+    Request: DeliveryId,
+    Result: DeliveryMutationResult,
+    execute: statements.terminateDeadLetter,
   })
   const claimRows = SqlSchema.findAll({
     Request: DeliveryClaimRequest,
@@ -511,21 +558,91 @@ export const makeDeliveryRepositorySql = <E>(
       ),
       Effect.mapError((cause) => repositoryError("listDeadLetters", cause)),
     ))
-  const retryDeadLetter = Effect.fn(
-    "DeliveryRepositorySql.retryDeadLetter",
-  )((id: DeliveryId) =>
-    retryDeadLetterRow(id).pipe(
-      Effect.mapError((cause) => repositoryError("retryDeadLetter", cause)),
+  const requireDeadLetter = (
+    id: DeliveryId,
+    operation:
+      | "retryDeadLetter"
+      | "repairDeadLetter"
+      | "terminateDeadLetter",
+  ) =>
+    findRowById(id).pipe(
+      Effect.mapError((cause) => repositoryError(operation, cause)),
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(new DeadLetterRecoveryError({
             deliveryId: id,
-            reason: "NotDeadLettered",
+            reason: "NotFound",
           })),
-          onSome: () => Effect.void,
+          onSome: (row) =>
+            row.state === "DeadLettered"
+              ? Effect.succeed(row)
+              : Effect.fail(new DeadLetterRecoveryError({
+                deliveryId: id,
+                reason: "NotDeadLettered",
+              })),
         }),
       ),
-    ))
+    )
+  const retryDeadLetter = Effect.fn(
+    "DeliveryRepositorySql.retryDeadLetter",
+  )(function* (id: DeliveryId) {
+    yield* requireDeadLetter(id, "retryDeadLetter")
+    const result = yield* retryDeadLetterRow(id).pipe(
+      Effect.mapError((cause) =>
+        repositoryError("retryDeadLetter", cause)
+      ),
+    )
+    if (Option.isNone(result)) {
+      return yield* Effect.fail(new DeadLetterRecoveryError({
+        deliveryId: id,
+        reason: "NotDeadLettered",
+      }))
+    }
+  })
+  const repairDeadLetter = Effect.fn(
+    "DeliveryRepositorySql.repairDeadLetter",
+  )(function* (id: DeliveryId, route: DeliveryRouteSnapshot) {
+    const row = yield* requireDeadLetter(id, "repairDeadLetter")
+    if (row.destination_id !== route.destinationId) {
+      return yield* Effect.fail(new DeadLetterDestinationMismatchError({
+        deliveryId: id,
+        deliveryDestinationId: row.destination_id,
+        repairDestinationId: route.destinationId,
+      }))
+    }
+    const result = yield* repairDeadLetterRow({
+      delivery_id: id,
+      destination_id: route.destinationId,
+      destination_url: route.endpoint.href,
+      configuration_version: route.configurationVersion,
+    }).pipe(
+      Effect.mapError((cause) =>
+        repositoryError("repairDeadLetter", cause)
+      ),
+    )
+    if (Option.isNone(result)) {
+      return yield* Effect.fail(new DeadLetterRecoveryError({
+        deliveryId: id,
+        reason: "NotDeadLettered",
+      }))
+    }
+  })
+  const terminateDeadLetter = Effect.fn(
+    "DeliveryRepositorySql.terminateDeadLetter",
+  )(function* (id: DeliveryId) {
+    yield* requireDeadLetter(id, "terminateDeadLetter")
+    const result = yield* terminateDeadLetterRow(id).pipe(
+      Effect.mapError((cause) =>
+        repositoryError("terminateDeadLetter", cause)
+      ),
+    )
+    if (Option.isNone(result)) {
+      return yield* Effect.fail(new DeadLetterRecoveryError({
+        deliveryId: id,
+        reason: "NotDeadLettered",
+      }))
+    }
+  })
   const claimPending = Effect.fn("DeliveryRepositorySql.claimPending")(
     (
       ownerId: WorkerId,
@@ -610,6 +727,8 @@ export const makeDeliveryRepositorySql = <E>(
     recordAttempt,
     listDeadLetters,
     retryDeadLetter,
+    repairDeadLetter,
+    terminateDeadLetter,
     claimPending,
     renewClaim,
     completeClaim,
@@ -792,6 +911,49 @@ export const DeliveryRepositorySql = Layer.effect(
             lease_expires_at_ms = NULL,
             next_eligible_at_ms = claim_clock.now_ms
           FROM claim_clock
+          WHERE
+            delivery.delivery_id = ${id}
+            AND delivery.state = 'DeadLettered'
+          RETURNING delivery.delivery_id
+        `,
+      repairDeadLetter: ({
+        delivery_id,
+        destination_id,
+        destination_url,
+        configuration_version,
+      }) =>
+        sql<Record<string, unknown>>`
+          WITH claim_clock AS (
+            SELECT floor(
+              extract(epoch FROM clock_timestamp()) * 1000
+            )::bigint AS now_ms
+          )
+          UPDATE deliveries AS delivery
+          SET
+            state = 'Pending',
+            status = NULL,
+            dead_letter_reason = NULL,
+            destination_url = ${destination_url},
+            configuration_version = ${configuration_version},
+            claim_owner = NULL,
+            lease_expires_at_ms = NULL,
+            next_eligible_at_ms = claim_clock.now_ms
+          FROM claim_clock
+          WHERE
+            delivery.delivery_id = ${delivery_id}
+            AND delivery.destination_id = ${destination_id}
+            AND delivery.state = 'DeadLettered'
+          RETURNING delivery.delivery_id
+        `,
+      terminateDeadLetter: (id) =>
+        sql<Record<string, unknown>>`
+          UPDATE deliveries AS delivery
+          SET
+            state = 'Terminated',
+            status = NULL,
+            dead_letter_reason = NULL,
+            claim_owner = NULL,
+            lease_expires_at_ms = NULL
           WHERE
             delivery.delivery_id = ${id}
             AND delivery.state = 'DeadLettered'

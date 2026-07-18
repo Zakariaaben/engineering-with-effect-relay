@@ -124,6 +124,9 @@ export const DeliveryState = Schema.TaggedUnion({
       "RetryBudgetExhausted",
     ]),
   },
+  Terminated: {
+    reason: Schema.Literal("OperatorTerminated"),
+  },
 })
 export type DeliveryState = Schema.Schema.Type<typeof DeliveryState>
 
@@ -434,6 +437,7 @@ export const transitionDeliveryState = (
     Delivered: () => current,
     Rejected: () => current,
     DeadLettered: () => current,
+    Terminated: () => current,
   })
 
 export interface DeliveryRequest {

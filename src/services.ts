@@ -1,6 +1,7 @@
 import { Context, Data, Effect, Option } from "effect"
 import {
   ClaimLostError,
+  DeadLetterDestinationMismatchError,
   DeadLetterRecoveryError,
   DeliveryRepositoryError,
   IngestionConflictError,
@@ -80,6 +81,21 @@ export class DeliveryRepository extends Context.Service<DeliveryRepository, {
     limit: number,
   ) => Effect.Effect<ReadonlyArray<DeliveryStatus>, DeliveryRepositoryError>
   readonly retryDeadLetter: (
+    id: DeliveryId,
+  ) => Effect.Effect<
+    void,
+    DeadLetterRecoveryError | DeliveryRepositoryError
+  >
+  readonly repairDeadLetter: (
+    id: DeliveryId,
+    route: DeliveryRouteSnapshot,
+  ) => Effect.Effect<
+    void,
+    | DeadLetterDestinationMismatchError
+    | DeadLetterRecoveryError
+    | DeliveryRepositoryError
+  >
+  readonly terminateDeadLetter: (
     id: DeliveryId,
   ) => Effect.Effect<
     void,

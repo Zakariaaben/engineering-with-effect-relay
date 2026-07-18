@@ -15,6 +15,7 @@ const validConfig = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_URL: "https://hooks.example.test/supervisor",
   RELAY_DESTINATION_AUTHORIZATION: "supervisor-secret",
   RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+  RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
 })
 
 describe("C04-10 delivery supervisor", () => {

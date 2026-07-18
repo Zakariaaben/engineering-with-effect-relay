@@ -341,6 +341,7 @@ const runtimeConfiguration = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_URL: "https://hooks.example.test/matrix",
   RELAY_GLOBAL_CONCURRENCY: 1,
   RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+  RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
 })
 
 interface MatrixRow {

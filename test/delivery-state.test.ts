@@ -49,6 +49,12 @@ describe("C02-04 delivery state", () => {
     const pending = DeliveryState.cases.Pending.make({})
     const deliveredState = DeliveryState.cases.Delivered.make({ status: 202 })
     const rejectedState = DeliveryState.cases.Rejected.make({ status: 400 })
+    const deadLetteredState = DeliveryState.cases.DeadLettered.make({
+      reason: "RetryBudgetExhausted",
+    })
+    const terminatedState = DeliveryState.cases.Terminated.make({
+      reason: "OperatorTerminated",
+    })
 
     const cases = [
       [pending, delivered, { _tag: "Delivered", status: 202 }],
@@ -58,6 +64,10 @@ describe("C02-04 delivery state", () => {
       [deliveredState, rejected, deliveredState],
       [rejectedState, delivered, rejectedState],
       [rejectedState, rejected, rejectedState],
+      [deadLetteredState, delivered, deadLetteredState],
+      [deadLetteredState, retryable, deadLetteredState],
+      [terminatedState, delivered, terminatedState],
+      [terminatedState, retryable, terminatedState],
     ] as const
 
     for (const [current, outcome, expected] of cases) {
