@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { ConfigProvider, Effect } from "effect"
+import { RelayPersistenceMemory } from "../src/layers.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
   event,
@@ -43,6 +44,7 @@ describe("C04-10 delivery supervisor", () => {
       httpClientLayer,
       httpServerLayer: makeTestHttpServerLayer(),
       configProvider: validConfig(),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: () => () => {},
     })
 

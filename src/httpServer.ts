@@ -97,7 +97,7 @@ export class DeliveryInternalProblem extends
   )({
     error: Schema.Literal("internal_error"),
   }, {
-    description: "Relay could not create a delivery identity.",
+    description: "Relay could not create or persist the delivery.",
     httpApiStatus: 500,
   })
 {}
@@ -270,6 +270,10 @@ export const DeliveryHttpHandlers = HttpApiBuilder.group(
             InvalidEventError: () =>
               Effect.fail(new InvalidEventProblem({
                 error: "invalid_event",
+              })),
+            RelayIntakeStoreError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
               })),
           }),
         )

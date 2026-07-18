@@ -26,14 +26,19 @@ import {
   DeliveryIdentityError,
   DeliveryOverloaded,
   type InvalidEventError,
+  type RelayIntakeStoreError,
 } from "./errors.ts"
 import { sendDelivery } from "./effectSender.ts"
 import { generateDeliveryId } from "./identifiers.ts"
 import type {
+  Delivery,
+  DeliveryId,
   DeliveryResult,
   Destination,
   DestinationId,
+  RelayEvent,
 } from "./model.ts"
+import { RelayIntakeStore } from "./services.ts"
 import { decodeIncomingEvent } from "./workflow.ts"
 
 type DeliveryExecutionFailure =
@@ -43,17 +48,22 @@ type DeliveryExecutionFailure =
 type DeliveryFailure =
   | DeliveryExecutionFailure
   | DeliveryOverloaded
+  | RelayIntakeStoreError
 
 interface DeliveryJob {
-  readonly candidate: unknown
   readonly cancelled: Deferred.Deferred<void>
   readonly clock: Clock.Clock
+  readonly deliveryId: DeliveryId
   readonly destination: Destination
+  readonly event: RelayEvent
   readonly random: Context.Service.Shape<typeof Random.Random>
-  readonly result: Deferred.Deferred<
-    DeliveryResult,
-    DeliveryExecutionFailure
-  >
+  readonly result: Deferred.Deferred<DeliveryResult>
+}
+
+export interface DeliverySupervisorHooks {
+  readonly afterIntakeCommit?: (
+    delivery: Delivery,
+  ) => Effect.Effect<void>
 }
 
 export interface DeliveryConcurrencyMetrics {
@@ -84,13 +94,16 @@ export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
   readonly loadMetrics: () => Effect.Effect<DeliveryLoadMetrics>
 }>()("Relay/DeliverySupervisor") {}
 
-export const DeliverySupervisorLive = Layer.effect(
+export const makeDeliverySupervisorLive = (
+  hooks: DeliverySupervisorHooks = {},
+) => Layer.effect(
   DeliverySupervisor,
   Effect.gen(function* () {
     const configuration = yield* AppConfiguration
     const crypto = yield* Crypto.Crypto
     const destinationClient = yield* DestinationClient
     const deliveryEvents = yield* DeliveryEvents
+    const intakeStore = yield* RelayIntakeStore
     const deliveries = yield* FiberSet.make<void>()
     const requests = yield* Effect.acquireRelease(
       Queue.dropping<DeliveryJob>(
@@ -186,17 +199,11 @@ export const DeliverySupervisorLive = Layer.effect(
     )
 
     const executeDelivery = Effect.fn("DeliverySupervisor.executeDelivery")(
-      function* (candidate: unknown, destination: Destination) {
-        const event = yield* decodeIncomingEvent(candidate)
-        const deliveryId = yield* generateDeliveryId().pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.mapError((cause) =>
-            new DeliveryIdentityError({
-              destinationId: destination.id,
-              cause,
-            })
-          ),
-        )
+      function* (
+        deliveryId: DeliveryId,
+        event: RelayEvent,
+        destination: Destination,
+      ) {
         const task = runDeliveryWithRetry(
           deliveryId,
           destination.id,
@@ -235,7 +242,11 @@ export const DeliverySupervisorLive = Layer.effect(
           wasCancelled
             ? Effect.interrupt
             : Effect.raceFirst(
-                executeDelivery(job.candidate, job.destination).pipe(
+                executeDelivery(
+                  job.deliveryId,
+                  job.event,
+                  job.destination,
+                ).pipe(
                   Effect.provideService(Clock.Clock, job.clock),
                   Effect.provideService(Random.Random, job.random),
                 ),
@@ -287,18 +298,35 @@ export const DeliverySupervisorLive = Layer.effect(
         const accepted = yield* admission.withPermitsIfAvailable(1)(
           trackAdmitted(
             Effect.gen(function* () {
-              const result = yield* Deferred.make<
-                DeliveryResult,
-                DeliveryExecutionFailure
-              >()
+              const event = yield* decodeIncomingEvent(candidate)
+              const deliveryId = yield* generateDeliveryId().pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.mapError((cause) =>
+                  new DeliveryIdentityError({
+                    destinationId: destination.id,
+                    cause,
+                  })
+                ),
+              )
+              const delivery = yield* intakeStore.savePending(
+                event,
+                deliveryId,
+                destination.id,
+              )
+              if (hooks.afterIntakeCommit !== undefined) {
+                yield* hooks.afterIntakeCommit(delivery)
+              }
+
+              const result = yield* Deferred.make<DeliveryResult>()
               const cancelled = yield* Deferred.make<void>()
               const clock = yield* Clock.Clock
               const random = yield* Random.Random
               const offered = yield* Queue.offer(requests, {
-                candidate,
                 cancelled,
                 clock,
+                deliveryId,
                 destination,
+                event,
                 random,
                 result,
               })
@@ -364,3 +392,5 @@ export const DeliverySupervisorLive = Layer.effect(
     })
   }),
 )
+
+export const DeliverySupervisorLive = makeDeliverySupervisorLive()

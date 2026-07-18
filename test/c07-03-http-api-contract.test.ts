@@ -12,6 +12,7 @@ import {
   RelayHttpApi,
   UnauthorizedProblem,
 } from "../src/httpServer.ts"
+import { RelayPersistenceMemory } from "../src/layers.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
   event,
@@ -59,6 +60,7 @@ describe("C07-03 HttpApi contract", () => {
         })
       ),
       httpServerLayer: makeTestHttpServerLayer(),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: () => () => {},
     })
 
@@ -136,6 +138,7 @@ describe("C07-03 HttpApi contract", () => {
         Effect.succeed(makeHttpResponse(request, 202))
       ),
       httpServerLayer: makeTestHttpServerLayer(),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: () => () => {},
     })
 

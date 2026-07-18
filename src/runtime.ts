@@ -18,7 +18,9 @@ import {
 } from "./deliverySupervisor.ts"
 import {
   makeRelayHttpApplicationLayer,
+  RelayPersistenceLive,
   type RelayHttpServerLayer,
+  type RelayPersistenceLayer,
 } from "./layers.ts"
 import type { DeliveryResult } from "./model.ts"
 
@@ -79,6 +81,7 @@ const httpAddress = Effect.fn("Relay.httpAddress")(function* () {
 export const startRelayApplication = async (options: {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>
   readonly httpServerLayer?: RelayHttpServerLayer
+  readonly persistenceLayer?: RelayPersistenceLayer
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
 }): Promise<RelayApplication> => {
@@ -90,6 +93,7 @@ export const startRelayApplication = async (options: {
         { host: "127.0.0.1", port: 3_000 },
       ),
       options.configProvider,
+      options.persistenceLayer ?? RelayPersistenceLive,
     ),
   )
   let removeShutdownHook = () => {}
