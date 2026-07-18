@@ -29,6 +29,7 @@ describe("C03-07 application configuration", () => {
     )
 
     expect(String(configuration.destination.id)).toBe("dst-primary")
+    expect(Number(configuration.destinationConfigurationVersion)).toBe(1)
     expect(configuration.destination.endpoint.href).toBe(
       "https://hooks.example.test/invoices",
     )
@@ -90,6 +91,30 @@ describe("C03-07 application configuration", () => {
       global: 8,
       perDestination: 2,
     })
+  })
+
+  it("loads and validates the destination configuration version", async () => {
+    const configuration = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
+        RELAY_DESTINATION_CONFIGURATION_VERSION: 7,
+      }),
+    )
+    expect(Number(configuration.destinationConfigurationVersion)).toBe(7)
+
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_DESTINATION_CONFIGURATION_VERSION: 0,
+      }).pipe(Effect.flip),
+    )
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain(
+      "RELAY_DESTINATION_CONFIGURATION_VERSION",
+    )
+    expect(error.message).not.toContain("must-not-leak")
   })
 
   it("rejects non-positive concurrency limits", async () => {

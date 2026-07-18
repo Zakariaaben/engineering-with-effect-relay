@@ -12,23 +12,31 @@ import {
   PostgresLive,
 } from "./deliveryRepositorySql.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
+import { EventIntakeLive } from "./eventIntake.ts"
+import { IngestionConflictError } from "./errors.ts"
 import {
   DeliveryHttpRoutes,
   IntakeAuthorizationLive,
 } from "./httpServer.ts"
 import {
   Delivery,
+  DeliveryRouteSnapshot,
   DeliveryResult,
   DeliveryState,
   type DeliveryId,
   type EventId,
+  type IngestionKey,
   type RelayEvent,
+  type RequestFingerprint,
 } from "./model.ts"
 import { ReconcilerLive } from "./reconciler.ts"
 import { RelayIntakeStoreSql } from "./intakeStoreSql.ts"
 import { RelayMigrationsLive } from "./migrations.ts"
 import {
   DeliveryRepository,
+  IntakeDecision,
+  type IntakeDecisionFields,
+  type IntakeRecord,
   RelayIntakeStore,
 } from "./services.ts"
 import { AppConfigurationLive } from "./configuration.ts"
@@ -53,6 +61,7 @@ const makeMemoryRepository = (
   events: Map<EventId, RelayEvent>,
   records: Map<DeliveryId, Delivery>,
   claims: Set<DeliveryId>,
+  routes: Map<DeliveryId, DeliveryRouteSnapshot> = new Map(),
 ) => {
   const save = Effect.fn("DeliveryRepository.save")(
     (delivery: Delivery) =>
@@ -84,7 +93,11 @@ const makeMemoryRepository = (
           const event = events.get(delivery.eventId)
           if (event === undefined) continue
           claims.add(delivery.id)
-          claimed.push({ delivery, event })
+          claimed.push({
+            delivery,
+            event,
+            route: Option.fromNullishOr(routes.get(delivery.id)),
+          })
         }
         return claimed
       }),
@@ -131,7 +144,61 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
   const events = new Map<EventId, RelayEvent>()
   const deliveries = new Map<DeliveryId, Delivery>()
   const claims = new Set<DeliveryId>()
-  const repository = makeMemoryRepository(events, deliveries, claims)
+  const routes = new Map<DeliveryId, DeliveryRouteSnapshot>()
+  const intakes = new Map<
+    IngestionKey,
+    {
+      readonly requestFingerprint: RequestFingerprint
+      readonly decision: IntakeDecisionFields
+    }
+  >()
+  const repository = makeMemoryRepository(
+    events,
+    deliveries,
+    claims,
+    routes,
+  )
+
+  const accept = Effect.fn("RelayIntakeStore.accept")(
+    (record: IntakeRecord) =>
+      Effect.suspend((): Effect.Effect<
+        IntakeDecision,
+        IngestionConflictError
+      > => {
+        const existing = intakes.get(record.ingestionKey)
+        if (existing !== undefined) {
+          if (existing.requestFingerprint !== record.requestFingerprint) {
+            return Effect.fail(new IngestionConflictError({
+              ingestionKey: record.ingestionKey,
+              existingEventId: existing.decision.event.id,
+            }))
+          }
+          return Effect.succeed(IntakeDecision.Replay(existing.decision))
+        }
+
+        const delivery = Delivery.make({
+          id: record.deliveryId,
+          eventId: record.event.id,
+          destinationId: record.route.destinationId,
+          state: DeliveryState.cases.Pending.make({}),
+        })
+        const decision = {
+          event: record.event,
+          delivery,
+          route: record.route,
+          acceptedAtMillis: record.acceptedAtMillis,
+        }
+        events.set(record.event.id, record.event)
+        deliveries.set(delivery.id, delivery)
+        routes.set(delivery.id, record.route)
+        claims.add(delivery.id)
+        intakes.set(record.ingestionKey, {
+          requestFingerprint: record.requestFingerprint,
+          decision,
+        })
+        return Effect.succeed(IntakeDecision.Accepted(decision))
+      }),
+  )
 
   const savePending = Effect.fn("RelayIntakeStore.savePending")(
     (
@@ -157,7 +224,7 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
     Layer.succeed(DeliveryRepository, repository),
     Layer.succeed(
       RelayIntakeStore,
-      RelayIntakeStore.of({ savePending }),
+      RelayIntakeStore.of({ accept, savePending }),
     ),
   )
 })
@@ -208,7 +275,7 @@ export const makeRelayApplicationLayer = (
     Layer.provideMerge(dependencies),
   )
 
-  return ReconcilerLive.pipe(
+  return Layer.merge(ReconcilerLive, EventIntakeLive).pipe(
     Layer.provideMerge(supervisor),
   )
 }

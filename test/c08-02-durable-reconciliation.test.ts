@@ -13,6 +13,7 @@ import {
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
   defaultDeliveryResilience,
+  defaultDestinationConfigurationVersion,
 } from "../src/configuration.ts"
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
 import {
@@ -105,7 +106,11 @@ const makePersistenceLayer = (
           const acceptedEvent = state.events.get(delivery.eventId)
           if (acceptedEvent === undefined) continue
           state.claims.add(delivery.id)
-          claimed.push({ delivery, event: acceptedEvent })
+          claimed.push({
+            delivery,
+            event: acceptedEvent,
+            route: Option.none(),
+          })
         }
         return claimed
       }),
@@ -131,6 +136,7 @@ const makePersistenceLayer = (
       }),
   })
   const intake = RelayIntakeStore.of({
+    accept: () => Effect.die(new Error("not used by this gate")),
     savePending: (acceptedEvent, deliveryId, destinationId) => {
       const delivery = Delivery.make({
         id: deliveryId,
@@ -247,6 +253,7 @@ describe("C08-02 durable reconciliation", () => {
       }),
       deliver: () => Effect.die(new Error("not used by this test")),
       deliverTo: () => Effect.die(new Error("not used by this test")),
+      enqueueClaimed: () => Effect.void,
       resumeClaimed: () => Effect.die(new Error("no claims expected")),
       loadMetrics: () => Effect.succeed({
         activeDeliveries: 0,
@@ -265,6 +272,8 @@ describe("C08-02 durable reconciliation", () => {
         AppConfiguration,
         AppConfiguration.of({
           destination,
+          destinationConfigurationVersion:
+            defaultDestinationConfigurationVersion,
           concurrency: { global: 1, perDestination: 1 },
           flow: defaultDeliveryFlow,
           recovery: {

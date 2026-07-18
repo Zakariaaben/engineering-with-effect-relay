@@ -1,5 +1,10 @@
 import { Schema } from "effect"
-import { DeliveryId, DestinationId } from "./model.ts"
+import {
+  DeliveryId,
+  DestinationId,
+  EventId,
+  IngestionKey,
+} from "./model.ts"
 
 export class InvalidEventError extends Schema.TaggedErrorClass<InvalidEventError>()(
   "InvalidEventError",
@@ -22,6 +27,26 @@ export class DeliveryIdentityError extends Schema.TaggedErrorClass<DeliveryIdent
   {
     destinationId: DestinationId,
     cause: Schema.Unknown,
+  },
+) {}
+
+export class EventIdentityError extends Schema.TaggedErrorClass<EventIdentityError>()(
+  "EventIdentityError",
+  {
+    operation: Schema.Literals([
+      "fingerprint",
+      "eventId",
+      "deliveryId",
+    ]),
+    cause: Schema.Unknown,
+  },
+) {}
+
+export class IngestionConflictError extends Schema.TaggedErrorClass<IngestionConflictError>()(
+  "IngestionConflictError",
+  {
+    ingestionKey: IngestionKey,
+    existingEventId: EventId,
   },
 ) {}
 
@@ -51,7 +76,7 @@ export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRep
 export class RelayIntakeStoreError extends Schema.TaggedErrorClass<RelayIntakeStoreError>()(
   "RelayIntakeStoreError",
   {
-    operation: Schema.Literal("savePending"),
+    operation: Schema.Literals(["savePending", "accept"]),
     cause: Schema.Unknown,
   },
 ) {}

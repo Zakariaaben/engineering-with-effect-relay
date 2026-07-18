@@ -63,6 +63,8 @@ describe("C07-04 SQL repository boundary", () => {
           event_type: event.type,
           invoice_id: String(event.invoiceId),
           amount_cents: event.amountCents,
+          destination_url: null,
+          configuration_version: null,
         }])
       },
     })
@@ -75,7 +77,11 @@ describe("C07-04 SQL repository boundary", () => {
       destination_id: delivery.destinationId,
       limit: 2,
     })
-    expect(claimed).toEqual([{ delivery, event }])
+    expect(claimed).toEqual([{
+      delivery,
+      event,
+      route: Option.none(),
+    }])
   })
 
   it("rejects an invalid claim batch before querying", async () => {

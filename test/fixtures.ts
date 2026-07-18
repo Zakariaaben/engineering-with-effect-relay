@@ -16,6 +16,7 @@ import {
   DestinationId,
   EventId,
   InvoiceId,
+  EventSubmission,
   RelayEvent,
   type Destination,
 } from "../src/model.ts"
@@ -24,6 +25,14 @@ export const event: RelayEvent = RelayEvent.make({
   id: EventId.make("evt-1"),
   invoiceId: InvoiceId.make("inv-1"),
   amountCents: AmountCents.make(12_500),
+})
+
+export const submission: EventSubmission = EventSubmission.make({
+  topic: "invoice.created",
+  payload: {
+    invoiceId: event.invoiceId,
+    amountCents: event.amountCents,
+  },
 })
 
 export const destination: Destination = {

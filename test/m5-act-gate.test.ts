@@ -12,6 +12,7 @@ import {
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
   defaultDeliveryResilience,
+  defaultDestinationConfigurationVersion,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
@@ -70,6 +71,8 @@ describe("C06-15 M5 act gate", () => {
               AppConfiguration,
               AppConfiguration.of({
                 destination,
+                destinationConfigurationVersion:
+                  defaultDestinationConfigurationVersion,
                 concurrency: { global: 2, perDestination: 1 },
                 flow: {
                   ...defaultDeliveryFlow,
