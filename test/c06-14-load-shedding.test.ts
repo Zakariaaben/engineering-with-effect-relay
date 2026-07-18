@@ -143,6 +143,7 @@ describe("C06-14 overload admission", () => {
         new DeliveryOverloaded({
           admissionCapacity: 4,
           destinationId: destinationC.id,
+          limit: "GlobalAdmission",
         }),
       )
       expect(
@@ -156,9 +157,14 @@ describe("C06-14 overload admission", () => {
           [destinationB.id, 1],
         ]),
         activeDeliveries: 4,
+        admittedByDestination: new Map([
+          [destinationA.id, 2],
+          [destinationB.id, 2],
+        ]),
         admittedDeliveries: 4,
         globalActive: 2,
         globalConcurrencyLimit: 2,
+        perDestinationAdmissionCapacity: 256,
         perDestinationConcurrencyLimit: 1,
         rejected: 1,
         requestQueueCapacity: 4,
@@ -167,9 +173,11 @@ describe("C06-14 overload admission", () => {
       expect(observation.settled).toEqual({
         activeByDestination: new Map(),
         activeDeliveries: 0,
+        admittedByDestination: new Map(),
         admittedDeliveries: 0,
         globalActive: 0,
         globalConcurrencyLimit: 2,
+        perDestinationAdmissionCapacity: 256,
         perDestinationConcurrencyLimit: 1,
         rejected: 1,
         requestQueueCapacity: 4,

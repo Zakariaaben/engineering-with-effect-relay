@@ -359,10 +359,12 @@ describe("C08-02 durable reconciliation", () => {
       resumeClaimed: () => Effect.die(new Error("no claims expected")),
       loadMetrics: () => Effect.succeed({
         activeDeliveries: 0,
+        admittedByDestination: new Map(),
         admittedDeliveries: 0,
         globalActive: 0,
         activeByDestination: new Map(),
         globalConcurrencyLimit: 1,
+        perDestinationAdmissionCapacity: 1,
         perDestinationConcurrencyLimit: 1,
         rejected: 0,
         requestQueueCapacity: 1,

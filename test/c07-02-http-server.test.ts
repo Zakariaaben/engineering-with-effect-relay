@@ -78,10 +78,12 @@ const makeHandler = (
       Effect.die(new Error("not used by this adapter test")),
     loadMetrics: () => Effect.succeed({
       activeDeliveries: 0,
+      admittedByDestination: new Map(),
       admittedDeliveries: 0,
       globalActive: 0,
       activeByDestination: new Map(),
       globalConcurrencyLimit: 1,
+      perDestinationAdmissionCapacity: 1,
       perDestinationConcurrencyLimit: 1,
       rejected: 0,
       requestQueueCapacity: 1,
@@ -210,6 +212,7 @@ describe("C07-02 HTTP server boundary", () => {
         new DeliveryOverloaded({
           admissionCapacity: 1,
           destinationId,
+          limit: "GlobalAdmission",
         }),
       )
     )
