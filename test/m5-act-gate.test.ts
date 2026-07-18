@@ -217,9 +217,11 @@ describe("C06-15 M5 act gate", () => {
       expect(observation.settled).toEqual({
         activeByDestination: new Map(),
         activeDeliveries: 0,
+        admittedByDestination: new Map(),
         admittedDeliveries: 0,
         globalActive: 0,
         globalConcurrencyLimit: 2,
+        perDestinationAdmissionCapacity: 256,
         perDestinationConcurrencyLimit: 1,
         rejected: pressureCycles,
         requestQueueCapacity: admissionCapacity,

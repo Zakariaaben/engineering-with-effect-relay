@@ -46,6 +46,7 @@ describe("C03-07 application configuration", () => {
     })
     expect(configuration.flow).toEqual({
       deliveryRequestsCapacity: 1_024,
+      deliveryRequestsPerDestinationCapacity: 256,
       deliveryEventsCapacity: 64,
     })
     expect({
@@ -170,9 +171,13 @@ describe("C03-07 application configuration", () => {
         RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
         RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
         RELAY_DELIVERY_REQUESTS_CAPACITY: 8,
+        RELAY_DELIVERY_REQUESTS_PER_DESTINATION_CAPACITY: 2,
       }),
     )
     expect(configured.flow.deliveryRequestsCapacity).toBe(8)
+    expect(
+      configured.flow.deliveryRequestsPerDestinationCapacity,
+    ).toBe(2)
 
     const error = await Effect.runPromise(
       loadConfiguration({
@@ -184,6 +189,20 @@ describe("C03-07 application configuration", () => {
     expect(error).toBeInstanceOf(Config.ConfigError)
     expect(error.message).toContain("RELAY_DELIVERY_REQUESTS_CAPACITY")
     expect(error.message).not.toContain("must-not-leak")
+
+    const invalidPartition = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_DELIVERY_REQUESTS_CAPACITY: 8,
+        RELAY_DELIVERY_REQUESTS_PER_DESTINATION_CAPACITY: 9,
+      }).pipe(Effect.flip),
+    )
+    expect(invalidPartition).toBeInstanceOf(Config.ConfigError)
+    expect(invalidPartition.message).toContain(
+      "per-destination admission capacity",
+    )
+    expect(invalidPartition.message).not.toContain("must-not-leak")
   })
 
   it("loads a finite bounded retry policy", async () => {

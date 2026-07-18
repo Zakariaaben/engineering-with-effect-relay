@@ -57,6 +57,10 @@ export class DeliveryOverloaded extends Schema.TaggedErrorClass<DeliveryOverload
   {
     admissionCapacity: Schema.Int.check(Schema.isGreaterThan(0)),
     destinationId: DestinationId,
+    limit: Schema.Literals([
+      "GlobalAdmission",
+      "DestinationAdmission",
+    ]),
   },
 ) {}
 

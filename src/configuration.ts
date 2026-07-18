@@ -4,6 +4,7 @@ import {
   Duration,
   Effect,
   Layer,
+  Option,
   Schema,
 } from "effect"
 import {
@@ -27,6 +28,7 @@ export interface DeliveryResilience {
 
 export interface DeliveryFlow {
   readonly deliveryRequestsCapacity: number
+  readonly deliveryRequestsPerDestinationCapacity: number
   readonly deliveryEventsCapacity: number
 }
 
@@ -47,6 +49,7 @@ export const defaultDeliveryResilience: DeliveryResilience = {
 
 export const defaultDeliveryFlow: DeliveryFlow = {
   deliveryRequestsCapacity: 1_024,
+  deliveryRequestsPerDestinationCapacity: 256,
   deliveryEventsCapacity: 64,
 }
 
@@ -104,16 +107,55 @@ const concurrency = Config.all({
   ).pipe(Config.withDefault(4)),
 })
 
+const DeliveryFlowSchema = Schema.Struct({
+  deliveryRequestsCapacity: PositiveInteger,
+  deliveryRequestsPerDestinationCapacity: PositiveInteger,
+  deliveryEventsCapacity: PositiveInteger,
+}).check(
+  Schema.makeFilter(
+    (policy) =>
+      policy.deliveryRequestsPerDestinationCapacity <=
+        policy.deliveryRequestsCapacity,
+    {
+      expected:
+        "a per-destination admission capacity no greater than the global admission capacity",
+    },
+  ),
+)
+
+const decodeFlow = Schema.decodeUnknownEffect(DeliveryFlowSchema)
+
 const flow = Config.all({
   deliveryRequestsCapacity: Config.schema(
     PositiveInteger,
     "RELAY_DELIVERY_REQUESTS_CAPACITY",
   ).pipe(Config.withDefault(defaultDeliveryFlow.deliveryRequestsCapacity)),
+  deliveryRequestsPerDestinationCapacity: Config.schema(
+    PositiveInteger,
+    "RELAY_DELIVERY_REQUESTS_PER_DESTINATION_CAPACITY",
+  ).pipe(Config.option),
   deliveryEventsCapacity: Config.schema(
     PositiveInteger,
     "RELAY_DELIVERY_EVENTS_CAPACITY",
   ).pipe(Config.withDefault(defaultDeliveryFlow.deliveryEventsCapacity)),
-})
+}).pipe(
+  Config.mapOrFail((policy) =>
+    decodeFlow({
+      ...policy,
+      deliveryRequestsPerDestinationCapacity: Option.getOrElse(
+        policy.deliveryRequestsPerDestinationCapacity,
+        () =>
+          Math.min(
+            defaultDeliveryFlow
+              .deliveryRequestsPerDestinationCapacity,
+            policy.deliveryRequestsCapacity,
+          ),
+      ),
+    }).pipe(
+      Effect.mapError((error) => new Config.ConfigError(error)),
+    )
+  ),
+)
 
 const resilience = Config.all({
   attemptTimeout: Config.schema(
