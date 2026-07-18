@@ -33,6 +33,13 @@ import {
   OperationsAuthorizationLive,
 } from "./httpServer.ts"
 import {
+  DeliveryAnalystLive,
+  IncidentAnalysisAudit,
+  IncidentAnalysisAuditMemory,
+  IncidentAnalysisModel,
+  IncidentAnalysisModelUnavailable,
+} from "./incidentAnalyst.ts"
+import {
   Delivery,
   ClaimGeneration,
   DeliveryClaim,
@@ -588,6 +595,14 @@ export const makeRelayApplicationLayer = (
     WorkerIdentity,
     unknown
   > = WorkerIdentityLive,
+  incidentAnalysisModelLayer: Layer.Layer<
+    IncidentAnalysisModel,
+    unknown
+  > = IncidentAnalysisModelUnavailable,
+  incidentAnalysisAuditLayer: Layer.Layer<
+    IncidentAnalysisAudit,
+    unknown
+  > = IncidentAnalysisAuditMemory,
 ) => {
   const dependencies = Layer.mergeAll(
     makeRelayAdapterLayer(httpClientLayer, persistenceLayer),
@@ -606,12 +621,18 @@ export const makeRelayApplicationLayer = (
     Layer.provideMerge(distributedDependencies),
   )
 
-  return Layer.mergeAll(
+  const application = Layer.mergeAll(
     ReconcilerLive,
     EventIntakeLive,
     DeliveryOperationsLive,
   ).pipe(
     Layer.provideMerge(supervisor),
+  )
+
+  return DeliveryAnalystLive.pipe(
+    Layer.provideMerge(application),
+    Layer.provideMerge(incidentAnalysisModelLayer),
+    Layer.provideMerge(incidentAnalysisAuditLayer),
   )
 }
 
@@ -629,12 +650,22 @@ export const makeRelayHttpApplicationLayer = (
     WorkerIdentity,
     unknown
   > = WorkerIdentityLive,
+  incidentAnalysisModelLayer: Layer.Layer<
+    IncidentAnalysisModel,
+    unknown
+  > = IncidentAnalysisModelUnavailable,
+  incidentAnalysisAuditLayer: Layer.Layer<
+    IncidentAnalysisAudit,
+    unknown
+  > = IncidentAnalysisAuditMemory,
 ) => {
   const application = makeRelayApplicationLayer(
     httpClientLayer,
     configProvider,
     persistenceLayer,
     workerIdentityLayer,
+    incidentAnalysisModelLayer,
+    incidentAnalysisAuditLayer,
   )
   const intakeAuthorization = IntakeAuthorizationLive.pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
