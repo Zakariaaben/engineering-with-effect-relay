@@ -36,7 +36,14 @@ export class DeliveryOverloaded extends Schema.TaggedErrorClass<DeliveryOverload
 export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRepositoryError>()(
   "DeliveryRepositoryError",
   {
-    operation: Schema.Literals(["save", "findById"]),
+    operation: Schema.Literals([
+      "save",
+      "findById",
+      "resetClaims",
+      "claimPending",
+      "completeClaim",
+      "releaseClaim",
+    ]),
     cause: Schema.Unknown,
   },
 ) {}

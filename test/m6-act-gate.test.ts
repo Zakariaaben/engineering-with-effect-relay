@@ -39,6 +39,10 @@ const makePersistenceLayer = (
         }),
       findById: (id) =>
         Effect.sync(() => Option.fromNullishOr(records.get(id))),
+      resetClaims: () => Effect.void,
+      claimPending: () => Effect.succeed([]),
+      completeClaim: () => Effect.void,
+      releaseClaim: () => Effect.void,
     }),
   )
   const intake = Layer.succeed(

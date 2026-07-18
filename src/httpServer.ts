@@ -282,6 +282,10 @@ export const DeliveryHttpHandlers = HttpApiBuilder.group(
               Effect.fail(new DeliveryInternalProblem({
                 error: "internal_error",
               })),
+            DeliveryRepositoryError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
+              })),
             DeliveryOverloaded: () =>
               Effect.fail(new DeliveryOverloadedProblem({
                 error: "overloaded",

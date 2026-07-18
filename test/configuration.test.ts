@@ -48,6 +48,12 @@ describe("C03-07 application configuration", () => {
       deliveryEventsCapacity: 64,
     })
     expect({
+      claimBatchSize: configuration.recovery.claimBatchSize,
+      pollInterval: Duration.toMillis(
+        configuration.recovery.pollInterval,
+      ),
+    }).toEqual({ claimBatchSize: 64, pollInterval: 1_000 })
+    expect({
       attemptTimeout: Duration.toMillis(
         configuration.resilience.attemptTimeout,
       ),
@@ -178,6 +184,31 @@ describe("C03-07 application configuration", () => {
       baseDelay: 250,
       maxDelay: 5_000,
     })
+  })
+
+  it("loads a positive bounded recovery policy", async () => {
+    const configuration = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
+        RELAY_RECOVERY_CLAIM_BATCH_SIZE: 12,
+        RELAY_RECOVERY_POLL_INTERVAL: "3 seconds",
+      }),
+    )
+
+    expect(configuration.recovery.claimBatchSize).toBe(12)
+    expect(Duration.toMillis(configuration.recovery.pollInterval)).toBe(3_000)
+
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_RECOVERY_CLAIM_BATCH_SIZE: 0,
+      }).pipe(Effect.flip),
+    )
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain("RELAY_RECOVERY_CLAIM_BATCH_SIZE")
+    expect(error.message).not.toContain("must-not-leak")
   })
 
   it.each([

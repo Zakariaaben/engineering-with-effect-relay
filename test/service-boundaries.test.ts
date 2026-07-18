@@ -16,6 +16,10 @@ describe("C03-02 service boundaries", () => {
       }),
       findById: (id) =>
         Effect.succeed(Option.fromNullishOr(records.get(id))),
+      resetClaims: () => Effect.void,
+      claimPending: () => Effect.succeed([]),
+      completeClaim: () => Effect.void,
+      releaseClaim: () => Effect.void,
     })
 
     const roundTrip = Effect.gen(function* () {

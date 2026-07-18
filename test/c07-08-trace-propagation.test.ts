@@ -81,6 +81,7 @@ describe("C07-08 trace propagation", () => {
       const deliver = byName("DeliverySupervisor.deliver")
       const deliverTo = byName("DeliverySupervisor.deliverTo")
       const persist = byName("RelayIntakeStore.savePending")
+      const submitClaimed = byName("DeliverySupervisor.submitClaimed")
       const processJob = byName("DeliverySupervisor.processJob")
       const outbound = byName("http.client POST")
 
@@ -88,7 +89,8 @@ describe("C07-08 trace propagation", () => {
       expect(parentSpanId(deliver)).toBe(server.spanId)
       expect(parentSpanId(deliverTo)).toBe(deliver.spanId)
       expect(parentSpanId(persist)).toBe(deliverTo.spanId)
-      expect(parentSpanId(processJob)).toBe(deliverTo.spanId)
+      expect(parentSpanId(submitClaimed)).toBe(deliverTo.spanId)
+      expect(parentSpanId(processJob)).toBe(submitClaimed.spanId)
       expect(deliverTo.attributes.get("relay.event_id")).toBe(event.id)
       expect(processJob.attributes.get("relay.delivery_id")).toBe(
         deliverTo.attributes.get("relay.delivery_id"),

@@ -10,6 +10,7 @@ import {
 import {
   AppConfiguration,
   defaultDeliveryFlow,
+  defaultDeliveryRecovery,
   defaultDeliveryResilience,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
@@ -58,6 +59,7 @@ describe("C06-14 overload admission", () => {
                   ...defaultDeliveryFlow,
                   deliveryRequestsCapacity: 4,
                 },
+                recovery: defaultDeliveryRecovery,
                 resilience: defaultDeliveryResilience,
               }),
             ),
