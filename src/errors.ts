@@ -40,3 +40,11 @@ export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRep
     cause: Schema.Unknown,
   },
 ) {}
+
+export class RelayIntakeStoreError extends Schema.TaggedErrorClass<RelayIntakeStoreError>()(
+  "RelayIntakeStoreError",
+  {
+    operation: Schema.Literal("savePending"),
+    cause: Schema.Unknown,
+  },
+) {}
