@@ -16,6 +16,7 @@ const validConfig = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: "dst-runtime",
   RELAY_DESTINATION_URL: "https://hooks.example.test/runtime",
   RELAY_DESTINATION_AUTHORIZATION: "runtime-secret",
+  RELAY_INTAKE_AUTHORIZATION: "intake-secret",
 })
 
 const makeShutdownHarness = () => {

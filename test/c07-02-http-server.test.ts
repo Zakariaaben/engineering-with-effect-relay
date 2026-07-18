@@ -1,9 +1,19 @@
 import { describe, expect, it } from "bun:test"
-import { ConfigProvider, Context, Effect } from "effect"
+import {
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Redacted,
+} from "effect"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import * as HttpServer from "effect/unstable/http/HttpServer"
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
 import { DeliveryOverloaded } from "../src/errors.ts"
-import { DeliveryHttpRoutes } from "../src/httpServer.ts"
+import {
+  DeliveryHttpRoutes,
+  IntakeAuthorization,
+} from "../src/httpServer.ts"
 import { DestinationId } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
@@ -22,6 +32,7 @@ const configuration = (capacity = 4) =>
     RELAY_DESTINATION_ID: "dst-http",
     RELAY_DESTINATION_URL: "https://hooks.example.test/http",
     RELAY_GLOBAL_CONCURRENCY: 1,
+    RELAY_INTAKE_AUTHORIZATION: "intake-secret",
   })
 
 const post = (
@@ -35,6 +46,7 @@ const post = (
   fetch(`${address}/deliveries`, {
     method: "POST",
     headers: {
+      authorization: "Bearer intake-secret",
       "content-type": options?.contentType ?? "application/json",
     },
     body,
@@ -72,7 +84,15 @@ const makeHandler = (
   })
 
   const webHandler = HttpRouter.toWebHandler(
-    DeliveryHttpRoutes,
+    DeliveryHttpRoutes.pipe(
+      Layer.provide(HttpServer.layerServices),
+      Layer.provide(Layer.succeed(
+        IntakeAuthorization,
+        IntakeAuthorization.of({
+          token: Redacted.make("intake-secret"),
+        }),
+      )),
+    ),
     { disableLogger: true },
   )
   return {
@@ -180,7 +200,10 @@ describe("C07-02 HTTP server boundary", () => {
       const overloaded = await overloadedHandler.handler(
         new Request("http://relay.test/deliveries", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            authorization: "Bearer intake-secret",
+            "content-type": "application/json",
+          },
           body: JSON.stringify(event),
         }),
       )
@@ -203,7 +226,10 @@ describe("C07-02 HTTP server boundary", () => {
     const response = interruptedHandler.handler(
       new Request("http://relay.test/deliveries", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          authorization: "Bearer intake-secret",
+          "content-type": "application/json",
+        },
         body: JSON.stringify(event),
         signal: controller.signal,
       }),

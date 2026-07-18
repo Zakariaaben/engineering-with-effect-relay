@@ -8,7 +8,10 @@ import {
 } from "./destinationClient.ts"
 import { DeliveryEventsLive } from "./deliveryEvents.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
-import { DeliveryHttpRoutes } from "./httpServer.ts"
+import {
+  DeliveryHttpRoutes,
+  IntakeAuthorizationLive,
+} from "./httpServer.ts"
 import type {
   Delivery,
   DeliveryId,
@@ -77,9 +80,13 @@ export const makeRelayHttpApplicationLayer = (
     httpClientLayer,
     configProvider,
   )
+  const intakeAuthorization = IntakeAuthorizationLive.pipe(
+    Layer.provide(ConfigProvider.layer(configProvider)),
+  )
 
   return HttpRouter.serve(DeliveryHttpRoutes).pipe(
     Layer.provideMerge(application),
+    Layer.provideMerge(intakeAuthorization),
     Layer.provideMerge(httpServerLayer),
   )
 }
