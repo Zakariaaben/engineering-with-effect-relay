@@ -32,7 +32,6 @@ import type {
 import { EventIntake } from "./eventIntake.ts"
 import {
   DeliveryId,
-  DeliveryStatus,
   DestinationId,
   EventAcceptance,
   EventSubmission,
@@ -40,8 +39,36 @@ import {
   RelayEvent,
   type DeliveryResult,
 } from "./model.ts"
+import {
+  DeadLetterStateProblem,
+  DeliveryInternalProblem,
+  DeliveryNotFoundProblem,
+  DestinationMismatchProblem,
+  OperationsAuthorization,
+  operationsAuthorizationClientLayer,
+  RelayOperationsApiGroup,
+  UnauthorizedProblem,
+} from "./operationsApi.ts"
 import { RelayReadiness } from "./readiness.ts"
-import { Reconciler, ReconciliationReport } from "./reconciler.ts"
+import { Reconciler } from "./reconciler.ts"
+
+export {
+  DeadLetterStateProblem,
+  DeliveryInternalProblem,
+  DeliveryNotFoundProblem,
+  DestinationMismatchProblem,
+  InspectDelivery,
+  ListDeadLetters,
+  OperationsAuthorization,
+  operationsAuthorizationClientLayer,
+  ReconcileDeliveries,
+  RelayOperationsApiGroup,
+  RelayOperationsHttpApi,
+  RepairDeadLetter,
+  RetryDeadLetter,
+  TerminateDeadLetter,
+  UnauthorizedProblem,
+} from "./operationsApi.ts"
 
 const maxEventBodySize = FileSystem.KiB(16)
 
@@ -71,15 +98,6 @@ export class InvalidEventProblem extends
   }, {
     description: "The request body is not a valid Relay event.",
     httpApiStatus: 400,
-  })
-{}
-
-export class UnauthorizedProblem extends
-  Schema.ErrorClass<UnauthorizedProblem>("Relay/UnauthorizedProblem")({
-    error: Schema.Literal("unauthorized"),
-  }, {
-    description: "The bearer credential is missing or invalid.",
-    httpApiStatus: 401,
   })
 {}
 
@@ -116,17 +134,6 @@ export class RelayNotReadyProblem extends
   })
 {}
 
-export class DeliveryInternalProblem extends
-  Schema.ErrorClass<DeliveryInternalProblem>(
-    "Relay/DeliveryInternalProblem",
-  )({
-    error: Schema.Literal("internal_error"),
-  }, {
-    description: "Relay could not create or persist the delivery.",
-    httpApiStatus: 500,
-  })
-{}
-
 export class IngestionConflictProblem extends
   Schema.ErrorClass<IngestionConflictProblem>(
     "Relay/IngestionConflictProblem",
@@ -135,40 +142,6 @@ export class IngestionConflictProblem extends
   }, {
     description:
       "The idempotency key was already used for a different request.",
-    httpApiStatus: 409,
-  })
-{}
-
-export class DeliveryNotFoundProblem extends
-  Schema.ErrorClass<DeliveryNotFoundProblem>(
-    "Relay/DeliveryNotFoundProblem",
-  )({
-    error: Schema.Literal("delivery_not_found"),
-  }, {
-    description: "No delivery exists with that identifier.",
-    httpApiStatus: 404,
-  })
-{}
-
-export class DeadLetterStateProblem extends
-  Schema.ErrorClass<DeadLetterStateProblem>(
-    "Relay/DeadLetterStateProblem",
-  )({
-    error: Schema.Literal("not_dead_lettered"),
-  }, {
-    description: "The delivery is no longer dead-lettered.",
-    httpApiStatus: 409,
-  })
-{}
-
-export class DestinationMismatchProblem extends
-  Schema.ErrorClass<DestinationMismatchProblem>(
-    "Relay/DestinationMismatchProblem",
-  )({
-    error: Schema.Literal("destination_mismatch"),
-  }, {
-    description:
-      "The configured repair destination does not own this delivery.",
     httpApiStatus: 409,
   })
 {}
@@ -190,19 +163,6 @@ export class DeliveryAuthorization extends
       requiredForClient: true,
       security: {
         bearerAuth: HttpApiSecurity.bearer,
-      },
-    },
-  )
-{}
-
-export class OperationsAuthorization extends
-  HttpApiMiddleware.Service<OperationsAuthorization>()(
-    "Relay/Http/OperationsAuthorization",
-    {
-      error: UnauthorizedProblem,
-      requiredForClient: true,
-      security: {
-        operationsBearerAuth: HttpApiSecurity.bearer,
       },
     },
   )
@@ -313,15 +273,6 @@ export const deliveryAuthorizationClientLayer = (
       next(HttpClientRequest.bearerToken(request, token)),
   )
 
-export const operationsAuthorizationClientLayer = (
-  token: Redacted.Redacted,
-) =>
-  HttpApiMiddleware.layerClient(
-    OperationsAuthorization,
-    ({ next, request }) =>
-      next(HttpClientRequest.bearerToken(request, token)),
-  )
-
 export const SubmitDelivery = HttpApiEndpoint.post(
   "submit",
   "/deliveries",
@@ -367,125 +318,12 @@ export const SubmitEvent = HttpApiEndpoint.post(
   ),
 )
 
-export const InspectDelivery = HttpApiEndpoint.get(
-  "inspect",
-  "/operations/deliveries/:deliveryId",
-  {
-    params: { deliveryId: DeliveryId },
-    success: DeliveryStatus,
-    error: [DeliveryNotFoundProblem, DeliveryInternalProblem],
-  },
-).pipe(
-  (endpoint) => endpoint.middleware(OperationsAuthorization),
-  (endpoint) => endpoint.annotate(
-    OpenApi.Summary,
-    "Inspect one delivery and its durable attempt history",
-  ),
-)
-
-export const ListDeadLetters = HttpApiEndpoint.get(
-  "listDeadLetters",
-  "/operations/dead-letters",
-  {
-    success: Schema.Array(DeliveryStatus),
-    error: DeliveryInternalProblem,
-  },
-).pipe(
-  (endpoint) => endpoint.middleware(OperationsAuthorization),
-  (endpoint) => endpoint.annotate(
-    OpenApi.Summary,
-    "List the first 50 dead-lettered deliveries",
-  ),
-)
-
-export const RetryDeadLetter = HttpApiEndpoint.post(
-  "retryDeadLetter",
-  "/operations/dead-letters/:deliveryId/retry",
-  {
-    params: { deliveryId: DeliveryId },
-    success: DeliveryStatus,
-    error: [
-      DeliveryNotFoundProblem,
-      DeadLetterStateProblem,
-      DeliveryInternalProblem,
-    ],
-  },
-).pipe(
-  (endpoint) => endpoint.middleware(OperationsAuthorization),
-  (endpoint) => endpoint.annotate(
-    OpenApi.Summary,
-    "Return a dead letter to pending with its retained route",
-  ),
-)
-
-export const RepairDeadLetter = HttpApiEndpoint.post(
-  "repairDeadLetter",
-  "/operations/dead-letters/:deliveryId/repair",
-  {
-    params: { deliveryId: DeliveryId },
-    success: DeliveryStatus,
-    error: [
-      DeliveryNotFoundProblem,
-      DeadLetterStateProblem,
-      DestinationMismatchProblem,
-      DeliveryInternalProblem,
-    ],
-  },
-).pipe(
-  (endpoint) => endpoint.middleware(OperationsAuthorization),
-  (endpoint) => endpoint.annotate(
-    OpenApi.Summary,
-    "Replace a dead letter's route with the current trusted route",
-  ),
-)
-
-export const TerminateDeadLetter = HttpApiEndpoint.post(
-  "terminateDeadLetter",
-  "/operations/dead-letters/:deliveryId/terminate",
-  {
-    params: { deliveryId: DeliveryId },
-    success: DeliveryStatus,
-    error: [
-      DeliveryNotFoundProblem,
-      DeadLetterStateProblem,
-      DeliveryInternalProblem,
-    ],
-  },
-).pipe(
-  (endpoint) => endpoint.middleware(OperationsAuthorization),
-  (endpoint) => endpoint.annotate(
-    OpenApi.Summary,
-    "Terminate a dead letter while retaining its history",
-  ),
-)
-
-export const ReconcileDeliveries = HttpApiEndpoint.post(
-  "reconcile",
-  "/operations/reconcile",
-  {
-    success: ReconciliationReport,
-    error: DeliveryInternalProblem,
-  },
-).pipe(
-  (endpoint) => endpoint.middleware(OperationsAuthorization),
-  (endpoint) => endpoint.annotate(
-    OpenApi.Summary,
-    "Run one bounded reconciliation pass",
-  ),
-)
-
 export const RelayHttpApi = HttpApi.make("RelayApi").add(
   HttpApiGroup.make("deliveries").add(SubmitDelivery),
 ).add(
   HttpApiGroup.make("events").add(SubmitEvent),
 ).add(
-  HttpApiGroup.make("operations")
-    .add(InspectDelivery)
-    .add(ListDeadLetters)
-    .add(RetryDeadLetter)
-    .add(RepairDeadLetter)
-    .add(TerminateDeadLetter)
-    .add(ReconcileDeliveries),
+  RelayOperationsApiGroup,
 ).pipe(
   (api) => api.annotate(OpenApi.Title, "Relay intake and operations API"),
   (api) => api.annotate(OpenApi.Version, "1.0.0"),

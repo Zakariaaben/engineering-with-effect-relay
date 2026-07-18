@@ -7,6 +7,7 @@
     "validate": "tsc --noEmit && bun test"
   },
   "dependencies": {
+    "@effect/platform-bun": "4.0.0-beta.98",
     "@effect/platform-node": "4.0.0-beta.98",
     "@effect/sql-pg": "4.0.0-beta.98",
     "effect": "4.0.0-beta.98"
