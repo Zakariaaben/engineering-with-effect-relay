@@ -376,14 +376,20 @@ describe("C08-03 atomic acceptance and ingestion idempotency", () => {
         DeliveryRepository.of({
           save: () => Effect.void,
           findById: () => Effect.succeed(Option.some(pending)),
+          findStatus: () => Effect.succeed(Option.none()),
+          recordAttempt: () => Effect.void,
+          listDeadLetters: () => Effect.succeed([]),
+          retryDeadLetter: () => Effect.void,
           claimPending: () =>
             Effect.sync(() => {
               if (claimed || terminal !== undefined) return []
               claimed = true
               return [{
                 claim,
+                claimLagMillis: 0,
                 delivery: pending,
                 event,
+                nextAttemptOrdinal: 1,
                 route: Option.some(route),
               }]
             }),

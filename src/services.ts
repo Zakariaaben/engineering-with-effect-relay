@@ -1,16 +1,19 @@
 import { Context, Data, Effect, Option } from "effect"
 import {
   ClaimLostError,
+  DeadLetterRecoveryError,
   DeliveryRepositoryError,
   IngestionConflictError,
   RelayIntakeStoreError,
 } from "./errors.ts"
 import type {
   Delivery,
+  DeliveryAttemptRecord,
   DeliveryClaim,
   DeliveryId,
   DeliveryResult,
   DeliveryRouteSnapshot,
+  DeliveryStatus,
   DestinationId,
   IngestionKey,
   RequestFingerprint,
@@ -22,6 +25,8 @@ export interface ClaimedDelivery {
   readonly claim: DeliveryClaim
   readonly delivery: Delivery
   readonly event: RelayEvent
+  readonly claimLagMillis: number
+  readonly nextAttemptOrdinal: number
   readonly route: Option.Option<DeliveryRouteSnapshot>
 }
 
@@ -65,6 +70,21 @@ export class DeliveryRepository extends Context.Service<DeliveryRepository, {
   readonly findById: (
     id: DeliveryId,
   ) => Effect.Effect<Option.Option<Delivery>, DeliveryRepositoryError>
+  readonly findStatus: (
+    id: DeliveryId,
+  ) => Effect.Effect<Option.Option<DeliveryStatus>, DeliveryRepositoryError>
+  readonly recordAttempt: (
+    attempt: DeliveryAttemptRecord,
+  ) => Effect.Effect<void, ClaimLostError | DeliveryRepositoryError>
+  readonly listDeadLetters: (
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<DeliveryStatus>, DeliveryRepositoryError>
+  readonly retryDeadLetter: (
+    id: DeliveryId,
+  ) => Effect.Effect<
+    void,
+    DeadLetterRecoveryError | DeliveryRepositoryError
+  >
   readonly claimPending: (
     ownerId: WorkerId,
     destinationId: DestinationId,

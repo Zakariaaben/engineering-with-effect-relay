@@ -17,6 +17,10 @@ describe("C03-02 service boundaries", () => {
       }),
       findById: (id) =>
         Effect.succeed(Option.fromNullishOr(records.get(id))),
+      findStatus: () => Effect.succeed(Option.none()),
+      recordAttempt: () => Effect.void,
+      listDeadLetters: () => Effect.succeed([]),
+      retryDeadLetter: () => Effect.void,
       claimPending: () => Effect.succeed([]),
       renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,

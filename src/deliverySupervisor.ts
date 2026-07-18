@@ -36,13 +36,16 @@ import { sendDelivery } from "./effectSender.ts"
 import { generateDeliveryId } from "./identifiers.ts"
 import { Destination } from "./model.ts"
 import type {
+  AttemptTraceCorrelation,
   Delivery,
+  DeliveryAttempt,
   DeliveryClaim,
   DeliveryId,
   DeliveryResult,
   DestinationId,
   RelayEvent,
 } from "./model.ts"
+import { makeDeliveryAttemptRecord } from "./model.ts"
 import {
   DeliveryRepository,
   RelayIntakeStore,
@@ -70,6 +73,7 @@ interface DeliveryJob {
   readonly deliveryId: DeliveryId
   readonly destination: Destination
   readonly event: RelayEvent
+  readonly nextAttemptOrdinal: number
   readonly parentSpan: Option.Option<Tracer.AnySpan>
   readonly random: Context.Service.Shape<typeof Random.Random>
   readonly result: Deferred.Deferred<
@@ -245,7 +249,23 @@ export const makeDeliverySupervisorLive = (
         deliveryId: DeliveryId,
         event: RelayEvent,
         destination: Destination,
+        claim: Ref.Ref<DeliveryClaim>,
+        firstAttemptOrdinal: number,
+        trace: AttemptTraceCorrelation,
       ) {
+        const recordAttempt = (attempt: DeliveryAttempt) =>
+          Ref.get(claim).pipe(
+            Effect.map((current) =>
+              makeDeliveryAttemptRecord(
+                deliveryId,
+                current,
+                attempt,
+                trace,
+              )
+            ),
+            Effect.flatMap(repository.recordAttempt),
+            Effect.andThen(metrics.recordAttempt(attempt)),
+          )
         const task = runDeliveryWithRetry(
           deliveryId,
           destination.id,
@@ -272,7 +292,8 @@ export const makeDeliverySupervisorLive = (
                 ),
               ),
             ),
-          metrics.recordAttempt,
+          recordAttempt,
+          firstAttemptOrdinal,
         )
         return yield* task.pipe(
           Effect.annotateLogs({
@@ -294,6 +315,12 @@ export const makeDeliverySupervisorLive = (
           "relay.claim_owner": job.claim.ownerId,
           "relay.claim_generation": job.claim.generation,
         })
+        const span = yield* Effect.currentSpan
+        const trace =
+          /^(?!0{32}$)[0-9a-f]{32}$/.test(span.traceId) &&
+            /^(?!0{16}$)[0-9a-f]{16}$/.test(span.spanId)
+            ? { traceId: span.traceId, spanId: span.spanId }
+            : { traceId: null, spanId: null }
         const wasCancelled = yield* Deferred.isDone(job.cancelled)
         const claim = yield* Ref.make(job.claim)
         const execution =
@@ -304,6 +331,9 @@ export const makeDeliverySupervisorLive = (
                   job.deliveryId,
                   job.event,
                   job.destination,
+                  claim,
+                  job.nextAttemptOrdinal,
+                  trace,
                 ).pipe(
                   Effect.provideService(Clock.Clock, job.clock),
                   Effect.provideService(Random.Random, job.random),
@@ -361,6 +391,31 @@ export const makeDeliverySupervisorLive = (
               ),
             )
           ),
+          Effect.tap((result) =>
+            result._tag === "ProtocolFailure" ||
+              result._tag === "Exhausted"
+              ? Effect.all([
+                  metrics.recordDeadLetter(
+                    result._tag === "ProtocolFailure"
+                      ? "ProviderProtocolFailure"
+                      : "RetryBudgetExhausted",
+                  ),
+                  Effect.logWarning("delivery.dead_lettered").pipe(
+                    Effect.annotateLogs({
+                      "relay.dead_letter_reason":
+                        result._tag === "ProtocolFailure"
+                          ? "ProviderProtocolFailure"
+                          : "RetryBudgetExhausted",
+                      "relay.attempt_count": result.attempts.length,
+                    }),
+                  ),
+                ], { discard: true })
+              : Effect.void
+          ),
+          Effect.tapErrorTag(
+            "ClaimLostError",
+            (error) => metrics.recordFencingRejection(error.operation),
+          ),
           Effect.catchCause((cause) =>
             Ref.get(claim).pipe(
               Effect.flatMap((current) =>
@@ -371,6 +426,10 @@ export const makeDeliverySupervisorLive = (
             ),
           ),
           Effect.provideService(Clock.Clock, job.clock),
+          Effect.annotateLogs({
+            "relay.claim_owner": job.claim.ownerId,
+            "relay.claim_generation": job.claim.generation,
+          }),
         )
         const exit = yield* Effect.exit(withLease)
 
@@ -451,6 +510,7 @@ export const makeDeliverySupervisorLive = (
           deliveryId: claimed.delivery.id,
           destination,
           event: claimed.event,
+          nextAttemptOrdinal: claimed.nextAttemptOrdinal,
           parentSpan,
           random,
           result,

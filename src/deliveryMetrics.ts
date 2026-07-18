@@ -1,5 +1,8 @@
 import { Effect, Metric } from "effect"
-import type { DeliveryAttempt } from "./model.ts"
+import type {
+  DeadLetterReason,
+  DeliveryAttempt,
+} from "./model.ts"
 
 export interface DeliverySaturationSnapshot {
   readonly activeAttempts: number
@@ -75,6 +78,20 @@ export const makeDeliveryMetrics = () => {
     description: "Completed delivery attempts by outcome and decision",
     incremental: true,
   })
+  const deadLetters = Metric.counter(
+    "relay_delivery_dead_letters_total",
+    {
+      description: "Deliveries moved to dead-letter state by reason",
+      incremental: true,
+    },
+  )
+  const fencingRejections = Metric.counter(
+    "relay_delivery_fencing_rejections_total",
+    {
+      description: "Stale delivery mutations rejected by operation",
+      incremental: true,
+    },
+  )
   const attemptDuration = Metric.histogram(
     "relay_delivery_attempt_duration_seconds",
     {
@@ -144,6 +161,18 @@ export const makeDeliveryMetrics = () => {
     return Effect.all(updates, { discard: true })
   }
 
+  const recordDeadLetter = (reason: DeadLetterReason) =>
+    Metric.update(
+      Metric.withAttributes(deadLetters, { reason }),
+      1,
+    )
+
+  const recordFencingRejection = (operation: string) =>
+    Metric.update(
+      Metric.withAttributes(fencingRejections, { operation }),
+      1,
+    )
+
   const setActiveAttempts = (value: number) =>
     Metric.update(activeAttempts, value)
 
@@ -161,6 +190,8 @@ export const makeDeliveryMetrics = () => {
     initialize,
     recordAdmissionRejection,
     recordAttempt,
+    recordDeadLetter,
+    recordFencingRejection,
     setActiveAttempts,
     setAdmittedDeliveries,
     setSaturation,

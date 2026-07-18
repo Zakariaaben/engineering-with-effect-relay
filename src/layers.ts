@@ -13,6 +13,7 @@ import {
   DestinationClientLive,
 } from "./destinationClient.ts"
 import { DeliveryEventsLive } from "./deliveryEvents.ts"
+import { DeliveryOperationsLive } from "./deliveryOperations.ts"
 import {
   DeliveryRepositorySql,
   PostgresLive,
@@ -21,6 +22,8 @@ import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
 import { EventIntakeLive } from "./eventIntake.ts"
 import {
   ClaimLostError,
+  DeadLetterRecoveryError,
+  DeliveryRepositoryError,
   IngestionConflictError,
 } from "./errors.ts"
 import {
@@ -34,7 +37,9 @@ import {
   DeliveryRouteSnapshot,
   DeliveryResult,
   DeliveryState,
+  DeliveryStatus,
   type DeliveryId,
+  type DeliveryAttemptRecord as DeliveryAttemptRecordValue,
   type EventId,
   type IngestionKey,
   type RelayEvent,
@@ -69,8 +74,12 @@ const stateFromResult = (
       DeliveryState.cases.Delivered.make({ status }),
     Rejected: ({ status }) =>
       DeliveryState.cases.Rejected.make({ status }),
-    ProtocolFailure: () => DeliveryState.cases.Pending.make({}),
-    Exhausted: () => DeliveryState.cases.Pending.make({}),
+    ProtocolFailure: () => DeliveryState.cases.DeadLettered.make({
+      reason: "ProviderProtocolFailure",
+    }),
+    Exhausted: () => DeliveryState.cases.DeadLettered.make({
+      reason: "RetryBudgetExhausted",
+    }),
   })
 
 const makeMemoryRepository = (
@@ -79,9 +88,11 @@ const makeMemoryRepository = (
   claims: Map<DeliveryId, DeliveryClaim>,
   generations: Map<DeliveryId, number>,
   routes: Map<DeliveryId, DeliveryRouteSnapshot> = new Map(),
+  attempts: Map<DeliveryId, Array<DeliveryAttemptRecordValue>> = new Map(),
+  nextEligibleAt: Map<DeliveryId, number> = new Map(),
 ) => {
   const lost = (
-    operation: "renew" | "complete" | "release",
+    operation: "renew" | "recordAttempt" | "complete" | "release",
     deliveryId: DeliveryId,
     claim: DeliveryClaim,
   ) => new ClaimLostError({
@@ -103,10 +114,12 @@ const makeMemoryRepository = (
   }
   const save = Effect.fn("DeliveryRepository.save")(
     (delivery: Delivery) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const nowMillis = yield* Clock.currentTimeMillis
         if (!records.has(delivery.id)) {
           records.set(delivery.id, delivery)
           generations.set(delivery.id, 0)
+          nextEligibleAt.set(delivery.id, nowMillis)
         }
       }),
   )
@@ -114,6 +127,83 @@ const makeMemoryRepository = (
     (id: DeliveryId) =>
       Effect.sync(() => Option.fromNullishOr(records.get(id))),
   )
+  const statusFor = (delivery: Delivery) => DeliveryStatus.make({
+    delivery,
+    attempts: [...(attempts.get(delivery.id) ?? [])].sort(
+      (left, right) => left.ordinal - right.ordinal,
+    ),
+  })
+  const findStatus = Effect.fn("DeliveryRepository.findStatus")(
+    (id: DeliveryId) =>
+      Effect.sync(() => Option.fromNullishOr(records.get(id))).pipe(
+        Effect.map(Option.map(statusFor)),
+      ),
+  )
+  const recordAttempt = Effect.fn("DeliveryRepository.recordAttempt")(
+    (attempt: DeliveryAttemptRecordValue) =>
+      Effect.gen(function* () {
+        const nowMillis = yield* Clock.currentTimeMillis
+        const claim = DeliveryClaim.make({
+          ownerId: attempt.workerId,
+          generation: attempt.claimGeneration,
+          leaseExpiresAtMillis: 0,
+        })
+        const delivery = records.get(attempt.deliveryId)
+        if (
+          delivery === undefined ||
+          delivery.state._tag !== "Pending" ||
+          !owns(attempt.deliveryId, claim, nowMillis)
+        ) {
+          return yield* Effect.fail(
+            lost("recordAttempt", attempt.deliveryId, claim),
+          )
+        }
+        const history = attempts.get(attempt.deliveryId) ?? []
+        if (history.some(({ ordinal }) => ordinal === attempt.ordinal)) {
+          return yield* Effect.fail(new DeliveryRepositoryError({
+            operation: "recordAttempt",
+            cause: `attempt ordinal ${attempt.ordinal} already exists`,
+          }))
+        }
+        attempts.set(attempt.deliveryId, [...history, attempt])
+        if (attempt.decision === "RetryScheduled") {
+          nextEligibleAt.set(
+            attempt.deliveryId,
+            attempt.completedAtMillis +
+              (attempt.retryDelayMillis ?? 0),
+          )
+        }
+      }),
+  )
+  const listDeadLetters = Effect.fn(
+    "DeliveryRepository.listDeadLetters",
+  )((limit: number) =>
+    Effect.sync(() =>
+      [...records.values()]
+        .filter(({ state }) => state._tag === "DeadLettered")
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .slice(0, limit)
+        .map(statusFor)
+    ))
+  const retryDeadLetter = Effect.fn(
+    "DeliveryRepository.retryDeadLetter",
+  )((id: DeliveryId) =>
+    Effect.gen(function* () {
+      const nowMillis = yield* Clock.currentTimeMillis
+      const current = records.get(id)
+      if (current === undefined || current.state._tag !== "DeadLettered") {
+        return yield* Effect.fail(new DeadLetterRecoveryError({
+          deliveryId: id,
+          reason: "NotDeadLettered",
+        }))
+      }
+      records.set(id, Delivery.make({
+        ...current,
+        state: DeliveryState.cases.Pending.make({}),
+      }))
+      claims.delete(id)
+      nextEligibleAt.set(id, nowMillis)
+    }))
   const claimPending = Effect.fn("DeliveryRepository.claimPending")(
     (
       ownerId: WorkerId,
@@ -130,6 +220,7 @@ const makeMemoryRepository = (
             claimed.length >= limit ||
             delivery.state._tag !== "Pending" ||
             delivery.destinationId !== destinationId ||
+            (nextEligibleAt.get(delivery.id) ?? 0) > nowMillis ||
             (existingClaim !== undefined &&
               existingClaim.leaseExpiresAtMillis > nowMillis)
           ) {
@@ -145,10 +236,18 @@ const makeMemoryRepository = (
           })
           generations.set(delivery.id, generation)
           claims.set(delivery.id, claim)
+          const eligibleAt = nextEligibleAt.get(delivery.id) ?? nowMillis
           claimed.push({
             claim,
+            claimLagMillis: Math.max(0, nowMillis - eligibleAt),
             delivery,
             event,
+            nextAttemptOrdinal: Math.max(
+              0,
+              ...(attempts.get(delivery.id) ?? []).map(
+                ({ ordinal }) => ordinal,
+              ),
+            ) + 1,
             route: Option.fromNullishOr(routes.get(delivery.id)),
           })
         }
@@ -218,6 +317,10 @@ const makeMemoryRepository = (
   return DeliveryRepository.of({
     save,
     findById,
+    findStatus,
+    recordAttempt,
+    listDeadLetters,
+    retryDeadLetter,
     claimPending,
     renewClaim,
     completeClaim,
@@ -236,6 +339,8 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
   const claims = new Map<DeliveryId, DeliveryClaim>()
   const generations = new Map<DeliveryId, number>()
   const routes = new Map<DeliveryId, DeliveryRouteSnapshot>()
+  const attempts = new Map<DeliveryId, Array<DeliveryAttemptRecordValue>>()
+  const nextEligibleAt = new Map<DeliveryId, number>()
   const intakes = new Map<
     IngestionKey,
     {
@@ -249,6 +354,8 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
     claims,
     generations,
     routes,
+    attempts,
+    nextEligibleAt,
   )
 
   const accept = Effect.fn("RelayIntakeStore.accept")(
@@ -289,6 +396,7 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
         routes.set(delivery.id, record.route)
         generations.set(delivery.id, 1)
         claims.set(delivery.id, claim)
+        nextEligibleAt.set(delivery.id, record.acceptedAtMillis)
         intakes.set(record.ingestionKey, {
           requestFingerprint: record.requestFingerprint,
           decision,
@@ -314,6 +422,7 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
         })
         events.set(event.id, event)
         deliveries.set(delivery.id, delivery)
+        nextEligibleAt.set(delivery.id, nowMillis)
         const claim = DeliveryClaim.make({
           ownerId: claimRequest.ownerId,
           generation: ClaimGeneration.make(1),
@@ -324,8 +433,10 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
         claims.set(delivery.id, claim)
         return {
           claim,
+          claimLagMillis: 0,
           delivery,
           event,
+          nextAttemptOrdinal: 1,
           route: Option.none(),
         }
       }),
@@ -394,7 +505,11 @@ export const makeRelayApplicationLayer = (
     Layer.provideMerge(distributedDependencies),
   )
 
-  return Layer.merge(ReconcilerLive, EventIntakeLive).pipe(
+  return Layer.mergeAll(
+    ReconcilerLive,
+    EventIntakeLive,
+    DeliveryOperationsLive,
+  ).pipe(
     Layer.provideMerge(supervisor),
   )
 }

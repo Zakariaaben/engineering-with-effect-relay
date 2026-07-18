@@ -59,8 +59,10 @@ const makeDurableIntakeStore = (
               generation: ClaimGeneration.make(1),
               leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
             }),
+            claimLagMillis: 0,
             delivery,
             event: acceptedEvent,
+            nextAttemptOrdinal: 1,
             route: Option.none(),
           }
         }),

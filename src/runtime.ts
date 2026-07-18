@@ -7,12 +7,14 @@ import {
   Effect,
   Layer,
   ManagedRuntime,
+  Option,
   Stream,
   Tracer,
 } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as HttpServer from "effect/unstable/http/HttpServer"
 import { DeliveryEvents } from "./deliveryEvents.ts"
+import { DeliveryOperations } from "./deliveryOperations.ts"
 import { EventIntake } from "./eventIntake.ts"
 import {
   DeliverySupervisor,
@@ -27,6 +29,8 @@ import {
 } from "./layers.ts"
 import type {
   DeliveryResult,
+  DeliveryId,
+  DeliveryStatus,
   EventAcceptance,
   IngestionKey,
 } from "./model.ts"
@@ -46,6 +50,13 @@ export interface RelayApplication {
     candidate: unknown,
   ) => Promise<EventAcceptance>
   readonly deliver: (candidate: unknown) => Promise<DeliveryResult>
+  readonly deliveryStatus: (
+    id: DeliveryId,
+  ) => Promise<DeliveryStatus | undefined>
+  readonly deadLetters: (
+    limit: number,
+  ) => Promise<ReadonlyArray<DeliveryStatus>>
+  readonly retryDeadLetter: (id: DeliveryId) => Promise<void>
   readonly deliveryResults: Stream.Stream<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
@@ -96,6 +107,27 @@ const deliveryResults = Effect.fn(
   const events = yield* DeliveryEvents
   return events.results
 })
+
+const deliveryStatus = Effect.fn("Relay.deliveryStatus")(
+  function* (id: DeliveryId) {
+    const operations = yield* DeliveryOperations
+    return Option.getOrUndefined(yield* operations.status(id))
+  },
+)
+
+const deadLetters = Effect.fn("Relay.deadLetters")(
+  function* (limit: number) {
+    const operations = yield* DeliveryOperations
+    return yield* operations.listDeadLetters(limit)
+  },
+)
+
+const retryDeadLetter = Effect.fn("Relay.retryDeadLetter")(
+  function* (id: DeliveryId) {
+    const operations = yield* DeliveryOperations
+    yield* operations.retryDeadLetter(id)
+  },
+)
 
 const httpAddress = Effect.fn("Relay.httpAddress")(function* () {
   const server = yield* HttpServer.HttpServer
@@ -171,15 +203,19 @@ export const startRelayApplication = async (options: {
         runtime.runPromise(activeDeliveryCount()),
       concurrencyMetrics: () =>
         runtime.runPromise(concurrencyMetrics()),
+      deadLetters: (limit) => runtime.runPromise(deadLetters(limit)),
       deliveryResults: results,
       deliver: (candidate) =>
         runtime.runPromise(deliverConfiguredCandidate(candidate)),
+      deliveryStatus: (id) => runtime.runPromise(deliveryStatus(id)),
       loadMetrics: () => runtime.runPromise(loadMetrics()),
       httpAddress: address,
       isReady: () =>
         shutdownPromise === undefined
           ? runtime.runPromise(startedReadiness.current)
           : Promise.resolve(false),
+      retryDeadLetter: (id) =>
+        runtime.runPromise(retryDeadLetter(id)),
       shutdown,
     }
   } catch (error) {
