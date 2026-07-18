@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
 import type { DestinationClientService } from "../src/destinationClient.ts"
+import { DeliveryTransportError } from "../src/errors.ts"
 import { deliverCandidate } from "../src/workflow.ts"
 import {
   delivery,
@@ -13,10 +14,16 @@ import { confuseDeliveryFailure } from "./incidents/confusedFailure.ts"
 describe("C02-07 confused-failure incident", () => {
   it("makes four different stops look like one provider response", async () => {
     const acceptedClient: DestinationClientService = {
-      post: () => Promise.resolve(202),
+      post: () => Effect.succeed({ status: 202 }),
     }
     const failedClient: DestinationClientService = {
-      post: () => Promise.reject(new Error("connection reset")),
+      post: () => Effect.fail(
+        new DeliveryTransportError({
+          deliveryId: delivery.id,
+          destinationId: destination.id,
+          cause: new Error("connection reset"),
+        }),
+      ),
     }
     const invalid = deliverCandidate(
       delivery.id,

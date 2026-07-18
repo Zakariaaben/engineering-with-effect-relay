@@ -1,9 +1,8 @@
 import { NodeCrypto } from "@effect/platform-node"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
+import * as HttpClient from "effect/unstable/http/HttpClient"
 import {
-  DestinationClient,
-  makeFetchDestinationClient,
-  type Fetch,
+  DestinationClientLive,
 } from "./destinationClient.ts"
 import { DeliveryEventsLive } from "./deliveryEvents.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
@@ -13,12 +12,6 @@ import type {
 } from "./model.ts"
 import { DeliveryRepository } from "./services.ts"
 import { AppConfigurationLive } from "./configuration.ts"
-
-export const destinationClientFromFetch = (fetch: Fetch) =>
-  Layer.succeed(
-    DestinationClient,
-    makeFetchDestinationClient(fetch),
-  )
 
 export const DeliveryRepositoryMemory = Layer.sync(
   DeliveryRepository,
@@ -40,18 +33,22 @@ export const DeliveryRepositoryMemory = Layer.sync(
   },
 )
 
-export const makeRelayAdapterLayer = (fetch: Fetch) =>
+export const makeRelayAdapterLayer = (
+  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
+) =>
   Layer.mergeAll(
-    destinationClientFromFetch(fetch),
+    DestinationClientLive.pipe(
+      Layer.provide(httpClientLayer),
+    ),
     DeliveryRepositoryMemory,
   )
 
 export const makeRelayApplicationLayer = (
-  fetch: Fetch,
+  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
   configProvider: ConfigProvider.ConfigProvider,
 ) => {
   const dependencies = Layer.mergeAll(
-    makeRelayAdapterLayer(fetch),
+    makeRelayAdapterLayer(httpClientLayer),
     AppConfigurationLive,
     NodeCrypto.layer,
   ).pipe(

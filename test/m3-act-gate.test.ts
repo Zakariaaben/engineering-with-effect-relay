@@ -102,31 +102,39 @@ describe("C04-12 M3 act gate", () => {
     const maximumByDestination = new Map<string, number>()
 
     const runtime = makeSupervisorRuntime(
-      async ({ endpoint }) => {
+      ({ endpoint }) => {
         const key = endpoint.hostname
-        const destinationActive = (activeByDestination.get(key) ?? 0) + 1
-        activeByDestination.set(key, destinationActive)
-        maximumByDestination.set(
-          key,
-          Math.max(maximumByDestination.get(key) ?? 0, destinationActive),
+        let destinationActive = 0
+        return Effect.acquireUseRelease(
+          Effect.sync(() => {
+            destinationActive = (activeByDestination.get(key) ?? 0) + 1
+            activeByDestination.set(key, destinationActive)
+            maximumByDestination.set(
+              key,
+              Math.max(
+                maximumByDestination.get(key) ?? 0,
+                destinationActive,
+              ),
+            )
+            activeGlobal += 1
+            maximumGlobal = Math.max(maximumGlobal, activeGlobal)
+
+            if (key === "a.example.test" && destinationActive === 2) {
+              destinationSaturated.resolve(undefined)
+            }
+            if (activeGlobal === 3) {
+              saturated.resolve(undefined)
+            }
+          }),
+          () =>
+            Effect.promise(() => release.promise).pipe(
+              Effect.as({ status: 202 }),
+            ),
+          () => Effect.sync(() => {
+            activeGlobal -= 1
+            activeByDestination.set(key, destinationActive - 1)
+          }),
         )
-        activeGlobal += 1
-        maximumGlobal = Math.max(maximumGlobal, activeGlobal)
-
-        if (key === "a.example.test" && destinationActive === 2) {
-          destinationSaturated.resolve(undefined)
-        }
-        if (activeGlobal === 3) {
-          saturated.resolve(undefined)
-        }
-
-        try {
-          await release.promise
-          return 202
-        } finally {
-          activeGlobal -= 1
-          activeByDestination.set(key, destinationActive - 1)
-        }
       },
       { global: 3, perDestination: 2 },
     )
@@ -195,26 +203,22 @@ describe("C04-12 M3 act gate", () => {
     let aborted = 0
 
     const runtime = makeSupervisorRuntime(
-      ({ signal }) => {
-        active += 1
-        started += 1
-        maximumActive = Math.max(maximumActive, active)
-        if (active === 2) {
-          saturated.resolve(undefined)
-        }
-
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener(
-            "abort",
-            () => {
-              active -= 1
-              aborted += 1
-              reject(signal.reason)
-            },
-            { once: true },
-          )
-        })
-      },
+      () =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            active += 1
+            started += 1
+            maximumActive = Math.max(maximumActive, active)
+            if (active === 2) {
+              saturated.resolve(undefined)
+            }
+          }),
+          () => Effect.never,
+          () => Effect.sync(() => {
+            active -= 1
+            aborted += 1
+          }),
+        ),
       { global: 2, perDestination: 1 },
     )
 

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "bun:test"
-import { Config, ConfigProvider } from "effect"
-import type { Fetch } from "../src/destinationClient.ts"
+import { Config, ConfigProvider, Effect } from "effect"
 import {
   type RegisterShutdownHook,
   startRelayApplication,
 } from "../src/runtime.ts"
-import { event, makeGate } from "./fixtures.ts"
+import {
+  event,
+  makeGate,
+  makeHttpClientLayer,
+  makeHttpResponse,
+} from "./fixtures.ts"
 
 const validConfig = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: "dst-runtime",
@@ -45,25 +49,20 @@ describe("C03-08 runtime boundary", () => {
       readonly endpoint: string
       readonly authorization: string | null
     }> = []
-    let discardedBodies = 0
-    const fetch: Fetch = async (endpoint, init) => {
-      requests.push({
-        endpoint: endpoint.href,
-        authorization: new Headers(init.headers).get("authorization"),
-      })
-      return {
-        status: 202,
-        body: {
-          cancel: async () => {
-            discardedBodies += 1
-          },
-        },
-      }
-    }
+    const httpClientLayer = makeHttpClientLayer(
+      (request, endpoint) =>
+        Effect.sync(() => {
+          requests.push({
+            endpoint: endpoint.href,
+            authorization: request.headers.authorization ?? null,
+          })
+          return makeHttpResponse(request)
+        }),
+    )
     const shutdown = makeShutdownHarness()
 
     const application = await startRelayApplication({
-      fetch,
+      httpClientLayer,
       configProvider: validConfig(),
       registerShutdownHook: shutdown.register,
     })
@@ -75,7 +74,6 @@ describe("C03-08 runtime boundary", () => {
       endpoint: "https://hooks.example.test/runtime",
       authorization: "Bearer runtime-secret",
     }])
-    expect(discardedBodies).toBe(1)
 
     const firstShutdown = application.shutdown()
     const repeatedShutdown = application.shutdown()
@@ -86,10 +84,8 @@ describe("C03-08 runtime boundary", () => {
 
   it("fails startup before registering a hook when configuration is invalid", async () => {
     const shutdown = makeShutdownHarness()
-    const fetch: Fetch = async () => ({ status: 202, body: null })
 
     await expect(startRelayApplication({
-      fetch,
       configProvider: ConfigProvider.fromUnknown({
         RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
       }),
@@ -101,23 +97,15 @@ describe("C03-08 runtime boundary", () => {
 
   it("lets the shutdown hook interrupt an in-flight Promise bridge", async () => {
     const started = makeGate<AbortSignal>()
-    const fetch: Fetch = async (_endpoint, init) => {
-      const signal = init.signal
-      if (!(signal instanceof AbortSignal)) {
-        throw new Error("expected the Effect cancellation signal")
-      }
-      started.resolve(signal)
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener(
-          "abort",
-          () => reject(signal.reason),
-          { once: true },
-        )
-      })
-    }
+    const httpClientLayer = makeHttpClientLayer(
+      (_request, _endpoint, signal) =>
+        Effect.sync(() => started.resolve(signal)).pipe(
+          Effect.andThen(Effect.never),
+        ),
+    )
     const shutdown = makeShutdownHarness()
     const application = await startRelayApplication({
-      fetch,
+      httpClientLayer,
       configProvider: validConfig(),
       registerShutdownHook: shutdown.register,
     })

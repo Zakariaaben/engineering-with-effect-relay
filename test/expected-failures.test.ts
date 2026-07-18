@@ -19,7 +19,7 @@ describe("C02-05 expected failures", () => {
     const client: DestinationClientService = {
       post: () => {
         clientCalls += 1
-        return Promise.resolve(202)
+        return Effect.succeed({ status: 202 })
       },
     }
 
@@ -45,8 +45,13 @@ describe("C02-05 expected failures", () => {
 
   it("preserves a transport failure as its own expected variant", async () => {
     const cause = Symbol("connection reset")
+    const transportFailure = new DeliveryTransportError({
+      deliveryId: delivery.id,
+      destinationId: destination.id,
+      cause,
+    })
     const client: DestinationClientService = {
-      post: () => Promise.reject(cause),
+      post: () => Effect.fail(transportFailure),
     }
 
     const failure = await Effect.runPromise(
@@ -57,17 +62,13 @@ describe("C02-05 expected failures", () => {
     )
 
     expect(failure).toEqual(
-      new DeliveryTransportError({
-        deliveryId: delivery.id,
-        destinationId: destination.id,
-        cause,
-      }),
+      transportFailure,
     )
   })
 
   it("keeps an observed provider rejection in the success value", async () => {
     const client: DestinationClientService = {
-      post: () => Promise.resolve(400),
+      post: () => Effect.succeed({ status: 400 }),
     }
 
     const outcome = await Effect.runPromise(

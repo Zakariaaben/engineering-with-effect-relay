@@ -1,4 +1,7 @@
-import { Context, Redacted } from "effect"
+import { Context, Effect, Layer } from "effect"
+import * as HttpClient from "effect/unstable/http/HttpClient"
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
+import { DeliveryTransportError } from "./errors.ts"
 import type {
   DeliveryRequest,
   DeliveryResponseEvidence,
@@ -6,59 +9,60 @@ import type {
 
 export class DestinationClient extends Context.Service<DestinationClient, {
   readonly post: (
-    request: DeliveryRequest & {
-      readonly signal: AbortSignal
-    },
-  ) => Promise<number | DeliveryResponseEvidence>
+    request: DeliveryRequest,
+  ) => Effect.Effect<
+    DeliveryResponseEvidence,
+    DeliveryTransportError
+  >
 }>()("Relay/DestinationClient") {}
 
 export type DestinationClientService =
   Context.Service.Shape<typeof DestinationClient>
 
-interface HttpResponse {
-  readonly status: number
-  readonly headers?: {
-    readonly get: (name: string) => string | null
-  }
-  readonly body: {
-    readonly cancel: () => Promise<void>
-  } | null
-}
+export const DestinationClientLive = Layer.effect(
+  DestinationClient,
+  Effect.gen(function* () {
+    const httpClient = (yield* HttpClient.HttpClient).pipe(
+      HttpClient.withScope,
+    )
 
-export type Fetch = (
-  input: URL,
-  init: RequestInit,
-) => Promise<HttpResponse>
+    const post = Effect.fn("DestinationClient.post")(
+      function* (request: DeliveryRequest) {
+        const httpRequest = HttpClientRequest.post(
+          request.endpoint,
+        ).pipe(
+          HttpClientRequest.bearerToken(request.authorization),
+          HttpClientRequest.setHeader(
+            "Idempotency-Key",
+            `"${request.deliveryId}"`,
+          ),
+          HttpClientRequest.bodyText(
+            request.body,
+            "application/json",
+          ),
+        )
 
-export const makeFetchDestinationClient = (
-  fetch: Fetch,
-): DestinationClientService => DestinationClient.of({
-  post: async ({
-    deliveryId,
-    endpoint,
-    authorization,
-    body,
-    signal,
-  }) => {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${Redacted.value(authorization)}`,
-        "content-type": "application/json",
-        "idempotency-key": `"${deliveryId}"`,
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const response = yield* httpClient.execute(httpRequest)
+            const retryAfter = response.headers["retry-after"]
+
+            return retryAfter === undefined
+              ? { status: response.status }
+              : { status: response.status, retryAfter }
+          }),
+        ).pipe(
+          Effect.mapError((cause) =>
+            new DeliveryTransportError({
+              deliveryId: request.deliveryId,
+              destinationId: request.destinationId,
+              cause,
+            })
+          ),
+        )
       },
-      body,
-      redirect: "manual",
-      signal,
-    })
+    )
 
-    try {
-      const retryAfter = response.headers?.get("retry-after")
-      return retryAfter === null || retryAfter === undefined
-        ? { status: response.status }
-        : { status: response.status, retryAfter }
-    } finally {
-      await response.body?.cancel()
-    }
-  },
-})
+    return DestinationClient.of({ post })
+  }),
+)

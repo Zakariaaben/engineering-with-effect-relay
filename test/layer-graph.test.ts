@@ -7,6 +7,8 @@ import {
   delivery,
   destination,
   event,
+  makeHttpClientLayer,
+  makeHttpResponse,
 } from "./fixtures.ts"
 
 class SharedConnection extends Context.Service<SharedConnection, {
@@ -66,15 +68,15 @@ const inspectConsumers = Effect.gen(function* () {
 
 describe("C03-06 Layer graph", () => {
   it("builds Relay's current adapter leaves as one graph", async () => {
-    let bodyDiscarded = false
-    const adapters = makeRelayAdapterLayer(async () => ({
-      status: 202,
-      body: {
-        cancel: async () => {
-          bodyDiscarded = true
-        },
-      },
-    }))
+    let requests = 0
+    const adapters = makeRelayAdapterLayer(
+      makeHttpClientLayer((request) =>
+        Effect.sync(() => {
+          requests += 1
+          return makeHttpResponse(request)
+        })
+      ),
+    )
     const program = Effect.gen(function* () {
       const repository = yield* DeliveryRepository
       yield* repository.save(delivery)
@@ -91,7 +93,7 @@ describe("C03-06 Layer graph", () => {
 
     expect(result.stored).toEqual(Option.some(delivery))
     expect(result.outcome._tag).toBe("Delivered")
-    expect(bodyDiscarded).toBe(true)
+    expect(requests).toBe(1)
   })
 
   it("shares one named dependency across two consumer branches", async () => {

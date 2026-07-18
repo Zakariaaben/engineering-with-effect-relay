@@ -1,8 +1,12 @@
 import { describe, expect, it } from "bun:test"
-import { ConfigProvider } from "effect"
-import type { Fetch } from "../src/destinationClient.ts"
+import { ConfigProvider, Effect } from "effect"
 import { startRelayApplication } from "../src/runtime.ts"
-import { event, makeGate } from "./fixtures.ts"
+import {
+  event,
+  makeGate,
+  makeHttpClientLayer,
+  makeHttpResponse,
+} from "./fixtures.ts"
 
 const validConfig = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: "dst-supervisor",
@@ -18,19 +22,23 @@ describe("C04-10 delivery supervisor", () => {
     const releaseSecond = makeGate<void>()
     let calls = 0
 
-    const fetch: Fetch = async () => {
-      const call = calls++
-      if (call === 0) {
-        firstStarted.resolve(undefined)
-        await releaseFirst.promise
-      } else {
+    const httpClientLayer = makeHttpClientLayer((request) =>
+      Effect.suspend(() => {
+        const call = calls++
+        if (call === 0) {
+          firstStarted.resolve(undefined)
+          return Effect.promise(() => releaseFirst.promise).pipe(
+            Effect.as(makeHttpResponse(request)),
+          )
+        }
         secondStarted.resolve(undefined)
-        await releaseSecond.promise
-      }
-      return { status: 202, body: null }
-    }
+        return Effect.promise(() => releaseSecond.promise).pipe(
+          Effect.as(makeHttpResponse(request)),
+        )
+      })
+    )
     const application = await startRelayApplication({
-      fetch,
+      httpClientLayer,
       configProvider: validConfig(),
       registerShutdownHook: () => () => {},
     })

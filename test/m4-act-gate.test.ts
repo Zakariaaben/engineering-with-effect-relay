@@ -112,23 +112,17 @@ describe("C05-08 M4 act gate", () => {
     let calls = 0
     const post: DestinationClientService["post"] = ({
       deliveryId,
-      signal,
-    }) => {
-      calls += 1
-      deliveryIds.push(deliveryId)
-      remoteEffects += 1
-      if (calls === 1) {
-        firstStarted.resolve(undefined)
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener(
-            "abort",
-            () => reject(signal.reason),
-            { once: true },
-          )
-        })
-      }
-      return Promise.resolve({ status: 202 })
-    }
+    }) =>
+      Effect.suspend(() => {
+        calls += 1
+        deliveryIds.push(deliveryId)
+        remoteEffects += 1
+        if (calls === 1) {
+          firstStarted.resolve(undefined)
+          return Effect.never
+        }
+        return Effect.succeed({ status: 202 })
+      })
 
     const result = await runM4(
       post,
@@ -160,14 +154,15 @@ describe("C05-08 M4 act gate", () => {
   it("honors Retry-After before the next attempt", async () => {
     const firstStarted = makeGate<void>()
     let calls = 0
-    const post: DestinationClientService["post"] = () => {
-      calls += 1
-      if (calls === 1) {
-        firstStarted.resolve(undefined)
-        return Promise.resolve({ status: 429, retryAfter: "3" })
-      }
-      return Promise.resolve({ status: 202 })
-    }
+    const post: DestinationClientService["post"] = () =>
+      Effect.suspend(() => {
+        calls += 1
+        if (calls === 1) {
+          firstStarted.resolve(undefined)
+          return Effect.succeed({ status: 429, retryAfter: "3" })
+        }
+        return Effect.succeed({ status: 202 })
+      })
 
     const result = await runM4(
       post,
@@ -198,16 +193,10 @@ describe("C05-08 M4 act gate", () => {
 
   it("clamps an in-flight timeout to the remaining delivery window", async () => {
     const started = makeGate<void>()
-    const post: DestinationClientService["post"] = ({ signal }) => {
-      started.resolve(undefined)
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener(
-          "abort",
-          () => reject(signal.reason),
-          { once: true },
-        )
-      })
-    }
+    const post: DestinationClientService["post"] = () =>
+      Effect.sync(() => started.resolve(undefined)).pipe(
+        Effect.andThen(Effect.never),
+      )
 
     const result = await runM4(
       post,

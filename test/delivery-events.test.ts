@@ -10,14 +10,21 @@ import {
 } from "effect"
 import { DeliveryEvents } from "../src/deliveryEvents.ts"
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
-import type { Fetch } from "../src/destinationClient.ts"
 import { makeRelayApplicationLayer } from "../src/layers.ts"
 import {
   DeliveryId,
   DeliveryResult,
   DestinationId,
 } from "../src/model.ts"
-import { event } from "./fixtures.ts"
+import {
+  event,
+  makeHttpClientLayer,
+  makeHttpResponse,
+} from "./fixtures.ts"
+
+const httpClientLayer = makeHttpClientLayer((request) =>
+  Effect.succeed(makeHttpResponse(request))
+)
 
 const configuration = (capacity = 64) => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: "dst-events",
@@ -37,7 +44,6 @@ const completed = (index: number) =>
 
 describe("C06-06 delivery event boundary", () => {
   it("broadcasts completed results through Stream without exposing PubSub", async () => {
-    const fetch: Fetch = async () => ({ status: 202, body: null })
     const observed = Effect.gen(function* () {
       const events = yield* DeliveryEvents
       const supervisor = yield* DeliverySupervisor
@@ -60,7 +66,7 @@ describe("C06-06 delivery event boundary", () => {
       }
     }).pipe(
       Effect.provide(
-        makeRelayApplicationLayer(fetch, configuration()),
+        makeRelayApplicationLayer(httpClientLayer, configuration()),
       ),
     )
 
@@ -74,7 +80,6 @@ describe("C06-06 delivery event boundary", () => {
 
 describe("C06-07 delivery event backpressure", () => {
   it("bounds retained results and backpressures a full feed", async () => {
-    const fetch: Fetch = async () => ({ status: 202, body: null })
     const observed = Effect.gen(function* () {
       const events = yield* DeliveryEvents
       const firstReceived = yield* Deferred.make<void>()
@@ -119,7 +124,7 @@ describe("C06-07 delivery event backpressure", () => {
       return yield* Ref.get(received)
     }).pipe(
       Effect.provide(
-        makeRelayApplicationLayer(fetch, configuration(2)),
+        makeRelayApplicationLayer(httpClientLayer, configuration(2)),
       ),
     )
 

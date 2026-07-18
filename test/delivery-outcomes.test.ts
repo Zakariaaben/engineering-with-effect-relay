@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test"
-import { Effect } from "effect"
-import {
-  makeFetchDestinationClient,
-  type Fetch,
-} from "../src/destinationClient.ts"
+import { Effect, Layer } from "effect"
+import { DestinationClientLive } from "../src/destinationClient.ts"
 import { sendDelivery } from "../src/effectSender.ts"
 import {
   classifyDeliveryResponse,
@@ -15,7 +12,8 @@ import {
   delivery,
   destination,
   event,
-  provideDestinationClient,
+  makeHttpClientLayer,
+  makeHttpResponse,
 } from "./fixtures.ts"
 
 describe("C05-06 delivery outcomes", () => {
@@ -50,25 +48,28 @@ describe("C05-06 delivery outcomes", () => {
   it("reuses one delivery key and lets a cooperating receiver deduplicate", async () => {
     const observed: Array<{
       readonly key: string | null
-      readonly method: string | undefined
-      readonly redirect: RequestRedirect | undefined
+      readonly method: string
     }> = []
     const committed = new Set<string>()
     let remoteEffects = 0
-    const fetch: Fetch = async (_endpoint, init) => {
-      const key = new Headers(init.headers).get("idempotency-key")
-      observed.push({
-        key,
-        method: init.method,
-        redirect: init.redirect,
-      })
-      if (key !== null && !committed.has(key)) {
-        committed.add(key)
-        remoteEffects += 1
-      }
-      return { status: 202, body: null }
-    }
-    const client = makeFetchDestinationClient(fetch)
+    const clientLayer = DestinationClientLive.pipe(
+      Layer.provide(
+        makeHttpClientLayer((request) =>
+          Effect.sync(() => {
+            const key = request.headers["idempotency-key"] ?? null
+            observed.push({
+              key,
+              method: request.method,
+            })
+            if (key !== null && !committed.has(key)) {
+              committed.add(key)
+              remoteEffects += 1
+            }
+            return makeHttpResponse(request)
+          })
+        ),
+      ),
+    )
     const nextDeliveryId = DeliveryId.make("dlv-2")
 
     const outcomes = await Effect.runPromise(
@@ -76,7 +77,7 @@ describe("C05-06 delivery outcomes", () => {
         sendDelivery(delivery.id, event, destination),
         sendDelivery(delivery.id, event, destination),
         sendDelivery(nextDeliveryId, event, destination),
-      ]).pipe(provideDestinationClient(client)),
+      ]).pipe(Effect.provide(clientLayer)),
     )
 
     expect(outcomes.map(({ _tag }) => _tag)).toEqual([
@@ -85,9 +86,9 @@ describe("C05-06 delivery outcomes", () => {
       "Delivered",
     ])
     expect(observed).toEqual([
-      { key: '"dlv-1"', method: "POST", redirect: "manual" },
-      { key: '"dlv-1"', method: "POST", redirect: "manual" },
-      { key: '"dlv-2"', method: "POST", redirect: "manual" },
+      { key: '"dlv-1"', method: "POST" },
+      { key: '"dlv-1"', method: "POST" },
+      { key: '"dlv-2"', method: "POST" },
     ])
     expect(remoteEffects).toBe(2)
   })

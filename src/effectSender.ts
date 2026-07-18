@@ -1,6 +1,5 @@
 import { Clock, Effect } from "effect"
 import { DestinationClient } from "./destinationClient.ts"
-import { DeliveryTransportError } from "./errors.ts"
 import {
   classifyDeliveryResponse,
   makeDeliveryRequest,
@@ -21,18 +20,7 @@ export const sendDelivery = Effect.fn("Relay.sendDelivery")(
       event,
       destination,
     )
-    const evidence = yield* Effect.tryPromise({
-      try: (signal) => client.post({ ...request, signal }),
-      catch: (cause) =>
-        new DeliveryTransportError({
-          deliveryId,
-          destinationId: destination.id,
-          cause,
-        }),
-    })
-    const response = typeof evidence === "number"
-      ? { status: evidence }
-      : evidence
+    const response = yield* client.post(request)
     const nowMillis = yield* Clock.currentTimeMillis
 
     return classifyDeliveryResponse(

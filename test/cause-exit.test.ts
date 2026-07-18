@@ -20,7 +20,7 @@ const failureCause = <A, E>(exit: Exit.Exit<A, E>): Cause.Cause<E> => {
 describe("C02-06 Cause and Exit", () => {
   it("keeps typed failure, defect, and interruption distinguishable", async () => {
     const client: DestinationClientService = {
-      post: () => Promise.resolve(202),
+      post: () => Effect.succeed({ status: 202 }),
     }
     const expectedExit = await Effect.runPromiseExit(
       deliverCandidate(
