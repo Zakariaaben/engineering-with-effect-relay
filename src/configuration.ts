@@ -2,6 +2,7 @@ import {
   Config,
   Context,
   Duration,
+  Effect,
   Layer,
   Schema,
 } from "effect"
@@ -31,6 +32,8 @@ export interface DeliveryFlow {
 
 export interface DeliveryRecovery {
   readonly claimBatchSize: number
+  readonly claimLeaseDuration: Duration.Duration
+  readonly claimRenewInterval: Duration.Duration
   readonly pollInterval: Duration.Duration
 }
 
@@ -49,6 +52,8 @@ export const defaultDeliveryFlow: DeliveryFlow = {
 
 export const defaultDeliveryRecovery: DeliveryRecovery = {
   claimBatchSize: 64,
+  claimLeaseDuration: Duration.seconds(30),
+  claimRenewInterval: Duration.seconds(10),
   pollInterval: Duration.seconds(1),
 }
 
@@ -133,16 +138,49 @@ const resilience = Config.all({
   ).pipe(Config.withDefault(defaultDeliveryResilience.maxDelay)),
 })
 
+const DeliveryRecoverySchema = Schema.Struct({
+  claimBatchSize: PositiveInteger,
+  claimLeaseDuration: Schema.Duration,
+  claimRenewInterval: Schema.Duration,
+  pollInterval: Schema.Duration,
+}).check(
+  Schema.makeFilter(
+    (policy) =>
+      Duration.toMillis(policy.claimRenewInterval) <
+        Duration.toMillis(policy.claimLeaseDuration),
+    {
+      expected:
+        "a recovery policy whose claim renewal interval is shorter than its lease",
+    },
+  ),
+)
+
+const decodeRecovery = Schema.decodeUnknownEffect(DeliveryRecoverySchema)
+
 const recovery = Config.all({
   claimBatchSize: Config.schema(
     PositiveInteger,
     "RELAY_RECOVERY_CLAIM_BATCH_SIZE",
   ).pipe(Config.withDefault(defaultDeliveryRecovery.claimBatchSize)),
+  claimLeaseDuration: Config.schema(
+    PositiveFiniteDuration,
+    "RELAY_RECOVERY_CLAIM_LEASE",
+  ).pipe(Config.withDefault(defaultDeliveryRecovery.claimLeaseDuration)),
+  claimRenewInterval: Config.schema(
+    PositiveFiniteDuration,
+    "RELAY_RECOVERY_CLAIM_RENEW_INTERVAL",
+  ).pipe(Config.withDefault(defaultDeliveryRecovery.claimRenewInterval)),
   pollInterval: Config.schema(
     PositiveFiniteDuration,
     "RELAY_RECOVERY_POLL_INTERVAL",
   ).pipe(Config.withDefault(defaultDeliveryRecovery.pollInterval)),
-})
+}).pipe(
+  Config.mapOrFail((policy) =>
+    decodeRecovery(policy).pipe(
+      Effect.mapError((error) => new Config.ConfigError(error)),
+    )
+  ),
+)
 
 export const AppConfigurationLive = Layer.effect(
   AppConfiguration,

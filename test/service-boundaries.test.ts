@@ -3,6 +3,7 @@ import { Crypto, Effect, Option } from "effect"
 import {
   generateDeliveryId,
   generateEventId,
+  generateWorkerId,
 } from "../src/identifiers.ts"
 import { DeliveryRepository } from "../src/services.ts"
 import { delivery } from "./fixtures.ts"
@@ -16,8 +17,8 @@ describe("C03-02 service boundaries", () => {
       }),
       findById: (id) =>
         Effect.succeed(Option.fromNullishOr(records.get(id))),
-      resetClaims: () => Effect.void,
       claimPending: () => Effect.succeed([]),
+      renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,
       releaseClaim: () => Effect.void,
     })
@@ -39,6 +40,7 @@ describe("C03-02 service boundaries", () => {
     const ids = Effect.all({
       eventId: generateEventId(),
       deliveryId: generateDeliveryId(),
+      workerId: generateWorkerId(),
     }).pipe(Effect.provideService(Crypto.Crypto, crypto))
 
     const result = await Effect.runPromise(ids)
@@ -47,6 +49,9 @@ describe("C03-02 service boundaries", () => {
     )
     expect(String(result.deliveryId)).toBe(
       "dlv-00000000-0000-4000-8000-000000000000",
+    )
+    expect(String(result.workerId)).toBe(
+      "wrk-00000000-0000-4000-8000-000000000000",
     )
   })
 })

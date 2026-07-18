@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import {
+  ClaimGeneration,
   Delivery,
+  DeliveryClaim,
   type DeliveryId,
   DeliveryState,
 } from "../src/model.ts"
@@ -39,8 +41,8 @@ const makePersistenceLayer = (
         }),
       findById: (id) =>
         Effect.sync(() => Option.fromNullishOr(records.get(id))),
-      resetClaims: () => Effect.void,
       claimPending: () => Effect.succeed([]),
+      renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,
       releaseClaim: () => Effect.void,
     }),
@@ -49,7 +51,12 @@ const makePersistenceLayer = (
     RelayIntakeStore,
     RelayIntakeStore.of({
       accept: () => Effect.die(new Error("not used by this gate")),
-      savePending: (acceptedEvent, deliveryId, destinationId) =>
+      savePending: (
+        acceptedEvent,
+        deliveryId,
+        destinationId,
+        claimRequest,
+      ) =>
         Effect.sync(() => {
           const delivery = Delivery.make({
             id: deliveryId,
@@ -58,8 +65,19 @@ const makePersistenceLayer = (
             state: DeliveryState.cases.Pending.make({}),
           })
           records.set(delivery.id, delivery)
-          return delivery
-        }).pipe(Effect.tap(afterCommit)),
+          return {
+            claim: DeliveryClaim.make({
+              ownerId: claimRequest.ownerId,
+              generation: ClaimGeneration.make(1),
+              leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
+            }),
+            delivery,
+            event: acceptedEvent,
+            route: Option.none(),
+          }
+        }).pipe(
+          Effect.tap((persisted) => afterCommit(persisted.delivery)),
+        ),
     }),
   )
 

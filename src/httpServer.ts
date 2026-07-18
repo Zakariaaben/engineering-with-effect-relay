@@ -321,6 +321,10 @@ export const DeliveryHttpHandlers = HttpApiBuilder.group(
         return yield* supervisor.deliver(payload).pipe(
           Effect.map(toHttpResult),
           Effect.catchTags({
+            ClaimLostError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
+              })),
             DeliveryIdentityError: () =>
               Effect.fail(new DeliveryInternalProblem({
                 error: "internal_error",
@@ -364,6 +368,10 @@ export const EventHttpHandlers = HttpApiBuilder.group(
           payload,
         ).pipe(
           Effect.catchTags({
+            ClaimLostError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
+              })),
             DeliveryRepositoryError: () =>
               Effect.fail(new DeliveryInternalProblem({
                 error: "internal_error",

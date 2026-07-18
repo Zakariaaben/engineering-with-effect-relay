@@ -1,11 +1,13 @@
 import { Context, Data, Effect, Option } from "effect"
 import {
+  ClaimLostError,
   DeliveryRepositoryError,
   IngestionConflictError,
   RelayIntakeStoreError,
 } from "./errors.ts"
 import type {
   Delivery,
+  DeliveryClaim,
   DeliveryId,
   DeliveryResult,
   DeliveryRouteSnapshot,
@@ -13,12 +15,19 @@ import type {
   IngestionKey,
   RequestFingerprint,
   RelayEvent,
+  WorkerId,
 } from "./model.ts"
 
 export interface ClaimedDelivery {
+  readonly claim: DeliveryClaim
   readonly delivery: Delivery
   readonly event: RelayEvent
   readonly route: Option.Option<DeliveryRouteSnapshot>
+}
+
+export interface ClaimRequest {
+  readonly ownerId: WorkerId
+  readonly leaseDurationMillis: number
 }
 
 export interface IntakeRecord {
@@ -28,6 +37,7 @@ export interface IntakeRecord {
   readonly deliveryId: DeliveryId
   readonly route: DeliveryRouteSnapshot
   readonly acceptedAtMillis: number
+  readonly claim: ClaimRequest
 }
 
 export interface IntakeDecisionFields {
@@ -37,8 +47,12 @@ export interface IntakeDecisionFields {
   readonly acceptedAtMillis: number
 }
 
+export interface AcceptedIntakeDecisionFields extends IntakeDecisionFields {
+  readonly claim: DeliveryClaim
+}
+
 export type IntakeDecision = Data.TaggedEnum<{
-  Accepted: IntakeDecisionFields
+  Accepted: AcceptedIntakeDecisionFields
   Replay: IntakeDecisionFields
 }>
 
@@ -51,18 +65,29 @@ export class DeliveryRepository extends Context.Service<DeliveryRepository, {
   readonly findById: (
     id: DeliveryId,
   ) => Effect.Effect<Option.Option<Delivery>, DeliveryRepositoryError>
-  readonly resetClaims: () => Effect.Effect<void, DeliveryRepositoryError>
   readonly claimPending: (
+    ownerId: WorkerId,
     destinationId: DestinationId,
     limit: number,
+    leaseDurationMillis: number,
   ) => Effect.Effect<ReadonlyArray<ClaimedDelivery>, DeliveryRepositoryError>
+  readonly renewClaim: (
+    deliveryId: DeliveryId,
+    claim: DeliveryClaim,
+    leaseDurationMillis: number,
+  ) => Effect.Effect<
+    DeliveryClaim,
+    ClaimLostError | DeliveryRepositoryError
+  >
   readonly completeClaim: (
     deliveryId: DeliveryId,
+    claim: DeliveryClaim,
     result: DeliveryResult,
-  ) => Effect.Effect<void, DeliveryRepositoryError>
+  ) => Effect.Effect<void, ClaimLostError | DeliveryRepositoryError>
   readonly releaseClaim: (
     deliveryId: DeliveryId,
-  ) => Effect.Effect<void, DeliveryRepositoryError>
+    claim: DeliveryClaim,
+  ) => Effect.Effect<void, ClaimLostError | DeliveryRepositoryError>
 }>()("Relay/DeliveryRepository") {}
 
 export class RelayIntakeStore extends Context.Service<RelayIntakeStore, {
@@ -76,5 +101,6 @@ export class RelayIntakeStore extends Context.Service<RelayIntakeStore, {
     event: RelayEvent,
     deliveryId: DeliveryId,
     destinationId: DestinationId,
-  ) => Effect.Effect<Delivery, RelayIntakeStoreError>
+    claim: ClaimRequest,
+  ) => Effect.Effect<ClaimedDelivery, RelayIntakeStoreError>
 }>()("Relay/RelayIntakeStore") {}

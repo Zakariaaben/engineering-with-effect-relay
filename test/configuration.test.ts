@@ -50,10 +50,21 @@ describe("C03-07 application configuration", () => {
     })
     expect({
       claimBatchSize: configuration.recovery.claimBatchSize,
+      claimLeaseDuration: Duration.toMillis(
+        configuration.recovery.claimLeaseDuration,
+      ),
+      claimRenewInterval: Duration.toMillis(
+        configuration.recovery.claimRenewInterval,
+      ),
       pollInterval: Duration.toMillis(
         configuration.recovery.pollInterval,
       ),
-    }).toEqual({ claimBatchSize: 64, pollInterval: 1_000 })
+    }).toEqual({
+      claimBatchSize: 64,
+      claimLeaseDuration: 30_000,
+      claimRenewInterval: 10_000,
+      pollInterval: 1_000,
+    })
     expect({
       attemptTimeout: Duration.toMillis(
         configuration.resilience.attemptTimeout,
@@ -217,11 +228,19 @@ describe("C03-07 application configuration", () => {
         RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
         RELAY_DESTINATION_AUTHORIZATION: "test-authorization",
         RELAY_RECOVERY_CLAIM_BATCH_SIZE: 12,
+        RELAY_RECOVERY_CLAIM_LEASE: "45 seconds",
+        RELAY_RECOVERY_CLAIM_RENEW_INTERVAL: "15 seconds",
         RELAY_RECOVERY_POLL_INTERVAL: "3 seconds",
       }),
     )
 
     expect(configuration.recovery.claimBatchSize).toBe(12)
+    expect(
+      Duration.toMillis(configuration.recovery.claimLeaseDuration),
+    ).toBe(45_000)
+    expect(
+      Duration.toMillis(configuration.recovery.claimRenewInterval),
+    ).toBe(15_000)
     expect(Duration.toMillis(configuration.recovery.pollInterval)).toBe(3_000)
 
     const error = await Effect.runPromise(
@@ -233,6 +252,21 @@ describe("C03-07 application configuration", () => {
     )
     expect(error).toBeInstanceOf(Config.ConfigError)
     expect(error.message).toContain("RELAY_RECOVERY_CLAIM_BATCH_SIZE")
+    expect(error.message).not.toContain("must-not-leak")
+  })
+
+  it("requires claim renewal to happen before lease expiry", async () => {
+    const error = await Effect.runPromise(
+      loadConfiguration({
+        RELAY_DESTINATION_URL: "https://hooks.example.test/invoices",
+        RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
+        RELAY_RECOVERY_CLAIM_LEASE: "10 seconds",
+        RELAY_RECOVERY_CLAIM_RENEW_INTERVAL: "10 seconds",
+      }).pipe(Effect.flip),
+    )
+
+    expect(error).toBeInstanceOf(Config.ConfigError)
+    expect(error.message).toContain("shorter than its lease")
     expect(error.message).not.toContain("must-not-leak")
   })
 

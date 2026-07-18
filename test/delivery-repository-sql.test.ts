@@ -4,14 +4,30 @@ import {
   deliveryToRow,
   makeDeliveryRepositorySql,
 } from "../src/deliveryRepositorySql.ts"
+import {
+  ClaimLostError,
+} from "../src/errors.ts"
+import {
+  ClaimGeneration,
+  DeliveryClaim,
+  DeliveryResult,
+  WorkerId,
+} from "../src/model.ts"
 import { delivery, event } from "./fixtures.ts"
 
 const recoveryStatements = {
-  resetClaims: () => Effect.void,
   claimPending: () => Effect.succeed([]),
-  completeClaim: () => Effect.void,
-  releaseClaim: () => Effect.void,
+  renewClaim: () => Effect.succeed([]),
+  completeClaim: () => Effect.succeed([]),
+  releaseClaim: () => Effect.succeed([]),
 }
+
+const workerId = WorkerId.make("wrk-repository-test")
+const claim = DeliveryClaim.make({
+  ownerId: workerId,
+  generation: ClaimGeneration.make(3),
+  leaseExpiresAtMillis: 30_000,
+})
 
 describe("C07-04 SQL repository boundary", () => {
   it("decodes a valid row before returning domain state", async () => {
@@ -65,19 +81,30 @@ describe("C07-04 SQL repository boundary", () => {
           amount_cents: event.amountCents,
           destination_url: null,
           configuration_version: null,
+          claim_owner: String(workerId),
+          claim_generation: Number(claim.generation),
+          lease_expires_at_ms: claim.leaseExpiresAtMillis,
         }])
       },
     })
 
     const claimed = await Effect.runPromise(
-      repository.claimPending(delivery.destinationId, 2),
+      repository.claimPending(
+        workerId,
+        delivery.destinationId,
+        2,
+        30_000,
+      ),
     )
 
     expect(observedRequest).toEqual({
+      owner_id: workerId,
       destination_id: delivery.destinationId,
       limit: 2,
+      lease_duration_ms: 30_000,
     })
     expect(claimed).toEqual([{
+      claim,
       delivery,
       event,
       route: Option.none(),
@@ -97,11 +124,49 @@ describe("C07-04 SQL repository boundary", () => {
     })
 
     const error = await Effect.runPromise(
-      Effect.flip(repository.claimPending(delivery.destinationId, 0)),
+      Effect.flip(repository.claimPending(
+        workerId,
+        delivery.destinationId,
+        0,
+        30_000,
+      )),
     )
 
     expect(queried).toBe(false)
     expect(error.operation).toBe("claimPending")
     expect(Schema.isSchemaError(error.cause)).toBe(true)
+  })
+
+  it("turns an empty fenced mutation into a typed claim-loss failure", async () => {
+    const repository = makeDeliveryRepositorySql({
+      ...recoveryStatements,
+      save: () => Effect.void,
+      findById: () => Effect.succeed([]),
+    })
+    const result = DeliveryResult.Delivered({
+      attempts: [],
+      deliveryId: delivery.id,
+      destinationId: delivery.destinationId,
+      status: 202,
+    })
+
+    const [renew, complete, release] = await Effect.runPromise(
+      Effect.all([
+        Effect.flip(repository.renewClaim(delivery.id, claim, 30_000)),
+        Effect.flip(repository.completeClaim(delivery.id, claim, result)),
+        Effect.flip(repository.releaseClaim(delivery.id, claim)),
+      ]),
+    )
+
+    expect(renew).toBeInstanceOf(ClaimLostError)
+    expect(renew.operation).toBe("renew")
+    expect(complete).toBeInstanceOf(ClaimLostError)
+    expect(complete.operation).toBe("complete")
+    expect(release).toBeInstanceOf(ClaimLostError)
+    expect(release.operation).toBe("release")
+    if (!(complete instanceof ClaimLostError)) {
+      throw new Error("expected a fenced completion failure")
+    }
+    expect(complete.generation).toBe(claim.generation)
   })
 })

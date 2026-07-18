@@ -10,6 +10,27 @@ export const DeliveryId = Schema.String.check(
 ).pipe(Schema.brand("DeliveryId"))
 export type DeliveryId = Schema.Schema.Type<typeof DeliveryId>
 
+export const WorkerId = Schema.String.check(
+  Schema.isPattern(/^wrk-[a-z0-9]+(?:-[a-z0-9]+)*$/),
+).pipe(Schema.brand("WorkerId"))
+export type WorkerId = Schema.Schema.Type<typeof WorkerId>
+
+export const ClaimGeneration = Schema.Int.check(
+  Schema.isGreaterThan(0),
+).pipe(Schema.brand("ClaimGeneration"))
+export type ClaimGeneration = Schema.Schema.Type<typeof ClaimGeneration>
+
+export interface DeliveryClaim extends
+  Schema.Schema.Type<typeof DeliveryClaim> {}
+
+export const DeliveryClaim = Schema.Struct({
+  ownerId: WorkerId,
+  generation: ClaimGeneration,
+  leaseExpiresAtMillis: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(0),
+  ),
+})
+
 export const DestinationId = Schema.String.check(
   Schema.isPattern(/^dst-[a-z0-9]+(?:-[a-z0-9]+)*$/),
 ).pipe(Schema.brand("DestinationId"))

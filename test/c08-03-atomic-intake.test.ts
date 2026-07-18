@@ -17,7 +17,9 @@ import { makeRelayIntakeStoreSql } from "../src/intakeStoreSql.ts"
 import { RelayPersistenceMemory } from "../src/layers.ts"
 import {
   ConfigurationVersion,
+  ClaimGeneration,
   Delivery,
+  DeliveryClaim,
   DeliveryId,
   DeliveryRouteSnapshot,
   DeliveryState,
@@ -25,6 +27,7 @@ import {
   EventId,
   IngestionKey,
   RequestFingerprint,
+  WorkerId,
   type DeliveryResult,
 } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
@@ -85,7 +88,10 @@ const makeDatabase = (failDeliveryInsert = false) =>
       statement: string,
       params: ReadonlyArray<unknown>,
     ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, SqlError.SqlError> =>
-      Effect.suspend(() => {
+      Effect.suspend((): Effect.Effect<
+        ReadonlyArray<Record<string, unknown>>,
+        SqlError.SqlError
+      > => {
         const normalized = statement.replace(/\s+/g, " ").trim()
         commands.push(normalized)
 
@@ -142,7 +148,11 @@ const makeDatabase = (failDeliveryInsert = false) =>
             configurationVersion: Number(params[6]),
           }
           target.deliveries.set(stored.deliveryId, stored)
-          return Effect.succeed([])
+          return Effect.succeed([{
+            claim_owner: String(params[7]),
+            claim_generation: 1,
+            lease_expires_at_ms: 30_000,
+          }])
         }
         if (normalized.startsWith("SELECT relay_events.event_id")) {
           const acceptedEvent = target.events.get(String(params[0]))
@@ -213,6 +223,10 @@ const record = (options: {
     configurationVersion: ConfigurationVersion.make(7),
   }),
   acceptedAtMillis: 1_234,
+  claim: {
+    ownerId: WorkerId.make("wrk-atomic-intake"),
+    leaseDurationMillis: 30_000,
+  },
 })
 
 const configuration = (endpoint: string) => ConfigProvider.fromUnknown({
@@ -348,7 +362,12 @@ describe("C08-03 atomic acceptance and ingestion idempotency", () => {
       destinationId: destination.id,
       state: DeliveryState.cases.Pending.make({}),
     })
-    let claimed = true
+    const claim = DeliveryClaim.make({
+      ownerId: WorkerId.make("wrk-route-recovery"),
+      generation: ClaimGeneration.make(1),
+      leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
+    })
+    let claimed = false
     let terminal: DeliveryResult | undefined
     const sentTo = makeGate<string>()
     const persistence = Layer.merge(
@@ -357,20 +376,20 @@ describe("C08-03 atomic acceptance and ingestion idempotency", () => {
         DeliveryRepository.of({
           save: () => Effect.void,
           findById: () => Effect.succeed(Option.some(pending)),
-          resetClaims: () => Effect.sync(() => {
-            claimed = false
-          }),
           claimPending: () =>
             Effect.sync(() => {
               if (claimed || terminal !== undefined) return []
               claimed = true
               return [{
+                claim,
                 delivery: pending,
                 event,
                 route: Option.some(route),
               }]
             }),
-          completeClaim: (_deliveryId, result) =>
+          renewClaim: (_deliveryId, currentClaim) =>
+            Effect.succeed(currentClaim),
+          completeClaim: (_deliveryId, _claim, result) =>
             Effect.sync(() => {
               terminal = result
               claimed = false

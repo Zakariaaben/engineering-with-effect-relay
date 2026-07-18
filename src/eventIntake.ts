@@ -2,6 +2,7 @@ import {
   Clock,
   Context,
   Crypto,
+  Duration,
   Effect,
   Encoding,
   Layer,
@@ -11,6 +12,7 @@ import {
 import { AppConfiguration } from "./configuration.ts"
 import { DeliverySupervisor } from "./deliverySupervisor.ts"
 import {
+  type ClaimLostError,
   EventIdentityError,
   type DeliveryRepositoryError,
   type IngestionConflictError,
@@ -33,8 +35,10 @@ import {
   IntakeDecision,
   RelayIntakeStore,
 } from "./services.ts"
+import { WorkerIdentity } from "./workerIdentity.ts"
 
 type EventIntakeFailure =
+  | ClaimLostError
   | DeliveryRepositoryError
   | EventIdentityError
   | IngestionConflictError
@@ -74,6 +78,7 @@ export const EventIntakeLive = Layer.effect(
     const crypto = yield* Crypto.Crypto
     const store = yield* RelayIntakeStore
     const supervisor = yield* DeliverySupervisor
+    const worker = yield* WorkerIdentity
 
     const accept = Effect.fn("EventIntake.accept")(
       function* (ingestionKey: IngestionKey, candidate: unknown) {
@@ -119,10 +124,17 @@ export const EventIntakeLive = Layer.effect(
           deliveryId,
           route,
           acceptedAtMillis,
+          claim: {
+            ownerId: worker.id,
+            leaseDurationMillis: Duration.toMillis(
+              configuration.recovery.claimLeaseDuration,
+            ),
+          },
         })
 
         if (IntakeDecision.$is("Accepted")(decision)) {
           yield* supervisor.enqueueClaimed({
+            claim: decision.claim,
             delivery: decision.delivery,
             event: decision.event,
             route: Option.some(decision.route),

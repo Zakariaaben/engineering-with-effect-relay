@@ -1,14 +1,19 @@
 import { describe, expect, it } from "bun:test"
-import { ConfigProvider, Effect, Layer } from "effect"
+import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { DeliveryRepositoryMemory } from "../src/layers.ts"
 import {
   Delivery,
+  ClaimGeneration,
+  DeliveryClaim,
   type DeliveryId,
   DeliveryState,
 } from "../src/model.ts"
 import { RelayReadiness } from "../src/readiness.ts"
 import { startRelayApplication } from "../src/runtime.ts"
-import { RelayIntakeStore } from "../src/services.ts"
+import {
+  DeliveryRepository,
+  RelayIntakeStore,
+} from "../src/services.ts"
 import {
   event,
   makeGate,
@@ -26,14 +31,20 @@ const configuration = () => ConfigProvider.fromUnknown({
   RELAY_INTAKE_AUTHORIZATION: "intake-secret",
 })
 
-const makeIntakeLayer = (
+const makePersistenceLayer = (
   deliveries: Map<DeliveryId, Delivery>,
-) =>
-  Layer.succeed(
+) => {
+  const claims = new Map<DeliveryId, DeliveryClaim>()
+  const intake = Layer.succeed(
     RelayIntakeStore,
     RelayIntakeStore.of({
       accept: () => Effect.die(new Error("not used by this gate")),
-      savePending: (acceptedEvent, deliveryId, destinationId) =>
+      savePending: (
+        acceptedEvent,
+        deliveryId,
+        destinationId,
+        claimRequest,
+      ) =>
         Effect.sync(() => {
           const delivery = Delivery.make({
             id: deliveryId,
@@ -42,10 +53,42 @@ const makeIntakeLayer = (
             state: DeliveryState.cases.Pending.make({}),
           })
           deliveries.set(delivery.id, delivery)
-          return delivery
+          const claim = DeliveryClaim.make({
+            ownerId: claimRequest.ownerId,
+            generation: ClaimGeneration.make(1),
+            leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
+          })
+          claims.set(delivery.id, claim)
+          return {
+            claim,
+            delivery,
+            event: acceptedEvent,
+            route: Option.none(),
+          }
         }),
     }),
   )
+  const repository = Layer.succeed(
+    DeliveryRepository,
+    DeliveryRepository.of({
+      save: (delivery) =>
+        Effect.sync(() => {
+          deliveries.set(delivery.id, delivery)
+        }),
+      findById: (id) =>
+        Effect.sync(() => Option.fromNullishOr(deliveries.get(id))),
+      claimPending: () => Effect.succeed([]),
+      renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
+      completeClaim: () => Effect.void,
+      releaseClaim: (deliveryId) =>
+        Effect.sync(() => {
+          claims.delete(deliveryId)
+        }),
+    }),
+  )
+
+  return Layer.merge(repository, intake)
+}
 
 const postDelivery = (address: string) =>
   fetch(`${address}/deliveries`, {
@@ -74,7 +117,12 @@ describe("C07-12 startup readiness and shutdown", () => {
         Effect.as(
           RelayIntakeStore.of({
             accept: () => Effect.die(new Error("not used by this gate")),
-            savePending: (acceptedEvent, deliveryId, destinationId) =>
+            savePending: (
+              acceptedEvent,
+              deliveryId,
+              destinationId,
+              claimRequest,
+            ) =>
               Effect.sync(() => {
                 const delivery = Delivery.make({
                   id: deliveryId,
@@ -83,7 +131,16 @@ describe("C07-12 startup readiness and shutdown", () => {
                   state: DeliveryState.cases.Pending.make({}),
                 })
                 deliveries.set(delivery.id, delivery)
-                return delivery
+                return {
+                  claim: DeliveryClaim.make({
+                    ownerId: claimRequest.ownerId,
+                    generation: ClaimGeneration.make(1),
+                    leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
+                  }),
+                  delivery,
+                  event: acceptedEvent,
+                  route: Option.none(),
+                }
               }),
           }),
         ),
@@ -175,10 +232,7 @@ describe("C07-12 startup readiness and shutdown", () => {
           }).pipe(Effect.andThen(Effect.never)),
       ),
       httpServerLayer: makeTestHttpServerLayer(),
-      persistenceLayer: Layer.merge(
-        DeliveryRepositoryMemory,
-        makeIntakeLayer(deliveries),
-      ),
+      persistenceLayer: makePersistenceLayer(deliveries),
       readinessLayer,
       registerShutdownHook: () => () => {},
     })

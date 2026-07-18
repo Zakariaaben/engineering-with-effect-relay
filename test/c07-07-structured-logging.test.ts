@@ -23,7 +23,9 @@ import {
   EventId,
   InvoiceId,
   RelayEvent,
+  WorkerId,
 } from "../src/model.ts"
+import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 
 describe("C07-07 structured delivery logs", () => {
   it("correlates an attempt without leaking credentials, payload, or cause", async () => {
@@ -80,6 +82,7 @@ describe("C07-07 structured delivery logs", () => {
       ),
       NodeCrypto.layer,
       RelayIntakeStoreMemory,
+      makeWorkerIdentityLayer(WorkerId.make("wrk-logging")),
     )
     const supervisor = DeliverySupervisorLive.pipe(
       Layer.provide(DeliveryEventsLive),
