@@ -165,14 +165,47 @@ const makeMemoryRepository = (
             cause: `attempt ordinal ${attempt.ordinal} already exists`,
           }))
         }
-        attempts.set(attempt.deliveryId, [...history, attempt])
         if (attempt.decision === "RetryScheduled") {
+          attempts.set(attempt.deliveryId, [...history, attempt])
           nextEligibleAt.set(
             attempt.deliveryId,
             attempt.completedAtMillis +
               (attempt.retryDelayMillis ?? 0),
           )
+          return
         }
+
+        const terminalState = attempt.decision === "Exhausted"
+          ? DeliveryState.cases.DeadLettered.make({
+            reason: "RetryBudgetExhausted",
+          })
+          : attempt.outcome === "Delivered" && attempt.status !== null
+          ? DeliveryState.cases.Delivered.make({
+            status: attempt.status,
+          })
+          : attempt.outcome === "Rejected" && attempt.status !== null
+          ? DeliveryState.cases.Rejected.make({
+            status: attempt.status,
+          })
+          : attempt.outcome === "ProtocolFailure"
+          ? DeliveryState.cases.DeadLettered.make({
+            reason: "ProviderProtocolFailure",
+          })
+          : undefined
+
+        if (terminalState === undefined) {
+          return yield* Effect.fail(new DeliveryRepositoryError({
+            operation: "recordAttempt",
+            cause: "terminal attempt has no terminal delivery state",
+          }))
+        }
+
+        attempts.set(attempt.deliveryId, [...history, attempt])
+        records.set(attempt.deliveryId, Delivery.make({
+          ...delivery,
+          state: terminalState,
+        }))
+        claims.delete(attempt.deliveryId)
       }),
   )
   const listDeadLetters = Effect.fn(

@@ -7,7 +7,6 @@ import {
   ClaimGeneration,
   DeliveryAttemptDecision,
   DeliveryOutcome,
-  DeliveryResult,
   WorkerId,
   makeDeliveryAttemptRecord,
   type DeliveryAttempt,
@@ -150,16 +149,6 @@ describe("C08-12 distributed delivery operations", () => {
           traceA,
         ),
       )
-      yield* repository.completeClaim(
-        delivery.id,
-        first.claim,
-        DeliveryResult.Exhausted({
-          deliveryId: delivery.id,
-          destinationId: destination.id,
-          attempts: [firstAttempt, secondAttempt],
-          lastOutcome: secondAttempt.outcome,
-        }),
-      )
       const deadLetters = yield* repository.listDeadLetters(10)
 
       yield* repository.retryDeadLetter(delivery.id)
@@ -200,17 +189,6 @@ describe("C08-12 distributed delivery operations", () => {
           traceB,
         ),
       )
-      yield* repository.completeClaim(
-        delivery.id,
-        second.claim,
-        DeliveryResult.Delivered({
-          deliveryId: delivery.id,
-          destinationId: destination.id,
-          attempts: [thirdAttempt],
-          status: 202,
-        }),
-      )
-
       return {
         deadLetters,
         finalStatus: Option.getOrThrow(

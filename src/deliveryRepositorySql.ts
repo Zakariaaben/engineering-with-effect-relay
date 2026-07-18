@@ -679,11 +679,50 @@ export const DeliveryRepositorySql = Layer.effect(
             )::bigint AS now_ms
           ), owned_delivery AS (
             UPDATE deliveries AS delivery
-            SET next_eligible_at_ms = CASE
-              WHEN ${row.decision} = 'RetryScheduled'
-                THEN ${row.completed_at_ms} + ${row.retry_delay_ms}
-              ELSE delivery.next_eligible_at_ms
-            END
+            SET
+              state = CASE
+                WHEN ${row.decision} = 'Terminal'
+                  AND ${row.outcome} = 'Delivered'
+                  THEN 'Delivered'
+                WHEN ${row.decision} = 'Terminal'
+                  AND ${row.outcome} = 'Rejected'
+                  THEN 'Rejected'
+                WHEN ${row.decision} = 'Terminal'
+                  AND ${row.outcome} = 'ProtocolFailure'
+                  THEN 'DeadLettered'
+                WHEN ${row.decision} = 'Exhausted'
+                  THEN 'DeadLettered'
+                ELSE delivery.state
+              END,
+              status = CASE
+                WHEN ${row.decision} = 'Terminal'
+                  AND ${row.outcome} IN ('Delivered', 'Rejected')
+                  THEN ${row.status}
+                ELSE delivery.status
+              END,
+              dead_letter_reason = CASE
+                WHEN ${row.decision} = 'Terminal'
+                  AND ${row.outcome} = 'ProtocolFailure'
+                  THEN 'ProviderProtocolFailure'
+                WHEN ${row.decision} = 'Exhausted'
+                  THEN 'RetryBudgetExhausted'
+                ELSE delivery.dead_letter_reason
+              END,
+              next_eligible_at_ms = CASE
+                WHEN ${row.decision} = 'RetryScheduled'
+                  THEN ${row.completed_at_ms} + ${row.retry_delay_ms}
+                ELSE delivery.next_eligible_at_ms
+              END,
+              claim_owner = CASE
+                WHEN ${row.decision} IN ('Terminal', 'Exhausted')
+                  THEN NULL
+                ELSE delivery.claim_owner
+              END,
+              lease_expires_at_ms = CASE
+                WHEN ${row.decision} IN ('Terminal', 'Exhausted')
+                  THEN NULL
+                ELSE delivery.lease_expires_at_ms
+              END
             FROM claim_clock
             WHERE
               delivery.delivery_id = ${row.delivery_id}

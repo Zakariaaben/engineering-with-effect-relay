@@ -18,6 +18,7 @@ import {
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
 import {
+  type AttemptObservation,
   observeDeliveryAttempt,
   runDeliveryWithRetry,
 } from "./deliveryEngine.ts"
@@ -85,6 +86,14 @@ interface DeliveryJob {
 export interface DeliverySupervisorHooks {
   readonly afterIntakeCommit?: (
     delivery: Delivery,
+  ) => Effect.Effect<void>
+  readonly afterAttemptObserved?: (
+    deliveryId: DeliveryId,
+    attempt: AttemptObservation,
+  ) => Effect.Effect<void>
+  readonly afterAttemptRecorded?: (
+    deliveryId: DeliveryId,
+    attempt: DeliveryAttempt,
   ) => Effect.Effect<void>
 }
 
@@ -264,6 +273,12 @@ export const makeDeliverySupervisorLive = (
               )
             ),
             Effect.flatMap(repository.recordAttempt),
+            Effect.tap(() =>
+              hooks.afterAttemptRecorded?.(
+                deliveryId,
+                attempt,
+              ) ?? Effect.void
+            ),
             Effect.andThen(metrics.recordAttempt(attempt)),
           )
         const task = runDeliveryWithRetry(
@@ -289,6 +304,13 @@ export const makeDeliverySupervisorLive = (
                     DestinationClient,
                     destinationClient,
                   ),
+                ),
+              ).pipe(
+                Effect.tap((attempt) =>
+                  hooks.afterAttemptObserved?.(
+                    deliveryId,
+                    attempt,
+                  ) ?? Effect.void
                 ),
               ),
             ),
@@ -380,17 +402,6 @@ export const makeDeliverySupervisorLive = (
             )
           }),
         ).pipe(
-          Effect.tap((result) =>
-            Ref.get(claim).pipe(
-              Effect.flatMap((current) =>
-                repository.completeClaim(
-                  job.deliveryId,
-                  current,
-                  result,
-                )
-              ),
-            )
-          ),
           Effect.tap((result) =>
             result._tag === "ProtocolFailure" ||
               result._tag === "Exhausted"
