@@ -17,8 +17,12 @@ describe("Relay M0 Effect workflow", () => {
     let starts = 0
     const client: DestinationClientService = {
       post: () => {
-        starts += 1
-        return response.promise
+        return Effect.sync(() => {
+          starts += 1
+        }).pipe(
+          Effect.andThen(Effect.promise(() => response.promise)),
+          Effect.map((status) => ({ status })),
+        )
       },
     }
 
@@ -38,10 +42,15 @@ describe("Relay M0 Effect workflow", () => {
     expect((await run)._tag).toBe("Delivered")
   })
 
-  it("maps an arbitrary rejection to a typed transport failure", async () => {
+  it("preserves a typed transport failure", async () => {
     const cause = Symbol("connection reset")
+    const transportFailure = new DeliveryTransportError({
+      deliveryId: delivery.id,
+      destinationId: destination.id,
+      cause,
+    })
     const client: DestinationClientService = {
-      post: () => Promise.reject(cause),
+      post: () => Effect.fail(transportFailure),
     }
 
     const failure = await Effect.runPromise(
@@ -52,27 +61,17 @@ describe("Relay M0 Effect workflow", () => {
     )
 
     expect(failure).toEqual(
-      new DeliveryTransportError({
-        deliveryId: delivery.id,
-        destinationId: destination.id,
-        cause,
-      }),
+      transportFailure,
     )
   })
 
-  it("forwards host cancellation to the client signal", async () => {
-    const ready = makeGate<AbortSignal>()
+  it("preserves host cancellation as interruption", async () => {
+    const ready = makeGate<void>()
     const client: DestinationClientService = {
-      post: ({ signal }) => {
-        ready.resolve(signal)
-        return new Promise<number>((_resolve, reject) => {
-          signal.addEventListener(
-            "abort",
-            () => reject(signal.reason),
-            { once: true },
-          )
-        })
-      },
+      post: () =>
+        Effect.sync(() => ready.resolve(undefined)).pipe(
+          Effect.andThen(Effect.never),
+        ),
     }
     const controller = new AbortController()
 
@@ -82,10 +81,9 @@ describe("Relay M0 Effect workflow", () => {
       ),
       { signal: controller.signal },
     )
-    const clientSignal = await ready.promise
+    await ready.promise
     controller.abort("stop Effect run")
 
     await expect(run).rejects.toBeDefined()
-    expect(clientSignal.aborted).toBe(true)
   })
 })

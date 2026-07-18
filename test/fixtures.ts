@@ -1,4 +1,7 @@
-import { Effect, Redacted } from "effect"
+import { Effect, Layer, Redacted } from "effect"
+import * as HttpClient from "effect/unstable/http/HttpClient"
+import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
 import {
   DestinationClient,
   type DestinationClientService,
@@ -37,6 +40,23 @@ export const delivery: Delivery = Delivery.make({
 export const provideDestinationClient = (
   client: DestinationClientService,
 ) => Effect.provideService(DestinationClient, client)
+
+export const makeHttpClientLayer = (
+  run: Parameters<typeof HttpClient.make>[0],
+) => Layer.succeed(HttpClient.HttpClient, HttpClient.make(run))
+
+export const makeHttpResponse = (
+  request: HttpClientRequest.HttpClientRequest,
+  status = 202,
+  headers?: HeadersInit,
+) =>
+  HttpClientResponse.fromWeb(
+    request,
+    new Response(
+      null,
+      headers === undefined ? { status } : { status, headers },
+    ),
+  )
 
 export const makeGate = <A>() => {
   let settle: ((value: A) => void) | undefined

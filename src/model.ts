@@ -252,6 +252,7 @@ export const transitionDeliveryState = (
 
 export interface DeliveryRequest {
   readonly deliveryId: DeliveryId
+  readonly destinationId: DestinationId
   readonly endpoint: URL
   readonly authorization: Destination["authorization"]
   readonly body: string
@@ -263,6 +264,7 @@ export const makeDeliveryRequest = (
   destination: Destination,
 ): DeliveryRequest => ({
   deliveryId,
+  destinationId: destination.id,
   endpoint: destination.endpoint,
   authorization: destination.authorization,
   body: JSON.stringify(event),

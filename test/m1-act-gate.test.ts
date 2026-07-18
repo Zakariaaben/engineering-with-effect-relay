@@ -27,7 +27,7 @@ describe("Relay M1 act gate", () => {
     const client: DestinationClientService = {
       post: () => {
         clientCalls += 1
-        return Promise.resolve(202)
+        return Effect.succeed({ status: 202 })
       },
     }
 
@@ -48,8 +48,13 @@ describe("Relay M1 act gate", () => {
 
   it("keeps client rejection as a transport failure", async () => {
     const transportCause = Symbol("connection reset")
+    const transportFailure = new DeliveryTransportError({
+      deliveryId: delivery.id,
+      destinationId: destination.id,
+      cause: transportCause,
+    })
     const client: DestinationClientService = {
-      post: () => Promise.reject(transportCause),
+      post: () => Effect.fail(transportFailure),
     }
 
     const exit = await Effect.runPromiseExit(
@@ -61,17 +66,13 @@ describe("Relay M1 act gate", () => {
     const reason = cause.reasons.find(Cause.isFailReason)
 
     expect(reason?.error).toEqual(
-      new DeliveryTransportError({
-        deliveryId: delivery.id,
-        destinationId: destination.id,
-        cause: transportCause,
-      }),
+      transportFailure,
     )
   })
 
   it("keeps an HTTP rejection as an observed outcome", async () => {
     const client: DestinationClientService = {
-      post: () => Promise.resolve(400),
+      post: () => Effect.succeed({ status: 400 }),
     }
 
     const outcome = await Effect.runPromise(
@@ -90,7 +91,7 @@ describe("Relay M1 act gate", () => {
   it("keeps a downstream invariant violation as a defect", async () => {
     const defect = new Error("broken invariant")
     const client: DestinationClientService = {
-      post: () => Promise.resolve(202),
+      post: () => Effect.succeed({ status: 202 }),
     }
     const program = deliverCandidate(
       delivery.id,
@@ -110,18 +111,12 @@ describe("Relay M1 act gate", () => {
   })
 
   it("keeps owner cancellation as interruption", async () => {
-    const ready = makeGate<AbortSignal>()
+    const ready = makeGate<void>()
     const client: DestinationClientService = {
-      post: ({ signal }) => {
-        ready.resolve(signal)
-        return new Promise<number>((_resolve, reject) => {
-          signal.addEventListener(
-            "abort",
-            () => reject(signal.reason),
-            { once: true },
-          )
-        })
-      },
+      post: () =>
+        Effect.sync(() => ready.resolve(undefined)).pipe(
+          Effect.andThen(Effect.never),
+        ),
     }
     const controller = new AbortController()
 
@@ -131,13 +126,12 @@ describe("Relay M1 act gate", () => {
       ),
       { signal: controller.signal },
     )
-    const clientSignal = await ready.promise
+    await ready.promise
     controller.abort("stop M1")
     const exit = await run
     const cause = failureCause(exit)
 
     expect(Cause.hasInterrupts(cause)).toBe(true)
     expect(Cause.hasFails(cause)).toBe(false)
-    expect(clientSignal.aborted).toBe(true)
   })
 })

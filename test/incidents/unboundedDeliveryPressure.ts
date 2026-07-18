@@ -19,18 +19,24 @@ export const reproduceUnboundedDeliveryPressure = async (
   let started = 0
 
   const client: DestinationClientService = {
-    post: async () => {
-      active += 1
-      started += 1
-      maximumActive = Math.max(maximumActive, active)
-      if (started === deliveryCount) {
-        allStarted.resolve(undefined)
-      }
-
-      await release.promise
-      active -= 1
-      return 202
-    },
+    post: () =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          active += 1
+          started += 1
+          maximumActive = Math.max(maximumActive, active)
+          if (started === deliveryCount) {
+            allStarted.resolve(undefined)
+          }
+        }),
+        () =>
+          Effect.promise(() => release.promise).pipe(
+            Effect.as({ status: 202 }),
+          ),
+        () => Effect.sync(() => {
+          active -= 1
+        }),
+      ),
   }
 
   const running = Effect.all(

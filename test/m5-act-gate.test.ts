@@ -79,18 +79,24 @@ describe("C06-15 M5 act gate", () => {
             Layer.succeed(
               DestinationClient,
               DestinationClient.of({
-                post: async () => {
-                  const index = attempt
-                  attempt += 1
-                  const startedGate = started[index]
-                  const releaseGate = releases[index]
-                  if (startedGate === undefined || releaseGate === undefined) {
-                    throw new Error("unexpected delivery attempt")
-                  }
-                  startedGate.resolve(undefined)
-                  await releaseGate.promise
-                  return { status: 202 }
-                },
+                post: () =>
+                  Effect.gen(function* () {
+                    const index = attempt
+                    attempt += 1
+                    const startedGate = started[index]
+                    const releaseGate = releases[index]
+                    if (
+                      startedGate === undefined ||
+                      releaseGate === undefined
+                    ) {
+                      return yield* Effect.die(
+                        new Error("unexpected delivery attempt"),
+                      )
+                    }
+                    startedGate.resolve(undefined)
+                    yield* Effect.promise(() => releaseGate.promise)
+                    return { status: 202 }
+                  }),
               }),
             ),
             NodeCrypto.layer,

@@ -1,16 +1,18 @@
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
 import {
   ConfigProvider,
   Effect,
+  Layer,
   ManagedRuntime,
   Stream,
 } from "effect"
+import * as HttpClient from "effect/unstable/http/HttpClient"
 import { DeliveryEvents } from "./deliveryEvents.ts"
 import {
   DeliverySupervisor,
   type DeliveryConcurrencyMetrics,
   type DeliveryLoadMetrics,
 } from "./deliverySupervisor.ts"
-import type { Fetch } from "./destinationClient.ts"
 import { makeRelayApplicationLayer } from "./layers.ts"
 import type { DeliveryResult } from "./model.ts"
 
@@ -63,13 +65,13 @@ const deliveryResults = Effect.fn(
 })
 
 export const startRelayApplication = async (options: {
-  readonly fetch: Fetch
+  readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
 }): Promise<RelayApplication> => {
   const runtime = ManagedRuntime.make(
     makeRelayApplicationLayer(
-      options.fetch,
+      options.httpClientLayer ?? NodeHttpClient.layerNodeHttp,
       options.configProvider,
     ),
   )

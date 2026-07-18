@@ -22,7 +22,7 @@ describe("C02-01 static-type incident", () => {
     const client: DestinationClientService = {
       post: ({ body }) => {
         observedBody = body
-        return Promise.resolve(202)
+        return Effect.succeed({ status: 202 })
       },
     }
 

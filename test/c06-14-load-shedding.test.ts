@@ -63,14 +63,15 @@ describe("C06-14 overload admission", () => {
             Layer.succeed(
               DestinationClient,
               DestinationClient.of({
-                post: async () => {
-                  started += 1
-                  if (started === 2) {
-                    saturated.resolve(undefined)
-                  }
-                  await release.promise
-                  return { status: 202 }
-                },
+                post: () =>
+                  Effect.gen(function* () {
+                    started += 1
+                    if (started === 2) {
+                      saturated.resolve(undefined)
+                    }
+                    yield* Effect.promise(() => release.promise)
+                    return { status: 202 }
+                  }),
               }),
             ),
             NodeCrypto.layer,
