@@ -118,8 +118,20 @@ export const DeliveryState = Schema.TaggedUnion({
   Rejected: {
     status: Schema.Int,
   },
+  DeadLettered: {
+    reason: Schema.Literals([
+      "ProviderProtocolFailure",
+      "RetryBudgetExhausted",
+    ]),
+  },
 })
 export type DeliveryState = Schema.Schema.Type<typeof DeliveryState>
+
+export const DeadLetterReason = Schema.Literals([
+  "ProviderProtocolFailure",
+  "RetryBudgetExhausted",
+])
+export type DeadLetterReason = Schema.Schema.Type<typeof DeadLetterReason>
 
 export interface Delivery extends Schema.Schema.Type<typeof Delivery> {}
 
@@ -279,6 +291,107 @@ export interface DeliveryAttempt {
   readonly decision: DeliveryAttemptDecision
 }
 
+const AttemptOutcome = Schema.Literals([
+  "Delivered",
+  "Rejected",
+  "Retryable",
+  "ProtocolFailure",
+  "TransportFailure",
+  "TimedOut",
+])
+
+const AttemptDecision = Schema.Literals([
+  "Terminal",
+  "RetryScheduled",
+  "Exhausted",
+])
+
+export interface DeliveryAttemptRecord extends
+  Schema.Schema.Type<typeof DeliveryAttemptRecord> {}
+
+export const DeliveryAttemptRecord = Schema.Struct({
+  deliveryId: DeliveryId,
+  ordinal: Schema.Int.check(Schema.isGreaterThan(0)),
+  workerId: WorkerId,
+  claimGeneration: ClaimGeneration,
+  startedAtMillis: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  completedAtMillis: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  outcome: AttemptOutcome,
+  decision: AttemptDecision,
+  status: Schema.NullOr(Schema.Int),
+  retryDelayMillis: Schema.NullOr(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  ),
+  traceId: Schema.NullOr(
+    Schema.String.check(
+      Schema.isPattern(/^(?!0{32}$)[0-9a-f]{32}$/),
+    ),
+  ),
+  spanId: Schema.NullOr(
+    Schema.String.check(
+      Schema.isPattern(/^(?!0{16}$)[0-9a-f]{16}$/),
+    ),
+  ),
+}).check(
+  Schema.makeFilter(
+    (attempt) => {
+      const carriesStatus = [
+        "Delivered",
+        "Rejected",
+        "Retryable",
+        "ProtocolFailure",
+      ].includes(attempt.outcome)
+      const retryable = [
+        "Retryable",
+        "TransportFailure",
+        "TimedOut",
+      ].includes(attempt.outcome)
+      return attempt.completedAtMillis >= attempt.startedAtMillis &&
+        (attempt.traceId === null) === (attempt.spanId === null) &&
+        carriesStatus === (attempt.status !== null) &&
+        (attempt.decision === "RetryScheduled") ===
+          (attempt.retryDelayMillis !== null) &&
+        (attempt.decision === "Terminal" ? !retryable : retryable)
+    },
+    { expected: "a consistent delivery-attempt record" },
+  ),
+)
+
+export interface DeliveryStatus extends
+  Schema.Schema.Type<typeof DeliveryStatus> {}
+
+export const DeliveryStatus = Schema.Struct({
+  delivery: Delivery,
+  attempts: Schema.Array(DeliveryAttemptRecord),
+})
+
+export interface AttemptTraceCorrelation {
+  readonly traceId: string | null
+  readonly spanId: string | null
+}
+
+export const makeDeliveryAttemptRecord = (
+  deliveryId: DeliveryId,
+  claim: DeliveryClaim,
+  attempt: DeliveryAttempt,
+  trace: AttemptTraceCorrelation,
+): DeliveryAttemptRecord => DeliveryAttemptRecord.make({
+  deliveryId,
+  ordinal: attempt.ordinal,
+  workerId: claim.ownerId,
+  claimGeneration: claim.generation,
+  startedAtMillis: attempt.startedAtMillis,
+  completedAtMillis: attempt.completedAtMillis,
+  outcome: attempt.outcome._tag,
+  decision: attempt.decision._tag,
+  status: "status" in attempt.outcome ? attempt.outcome.status : null,
+  retryDelayMillis: attempt.decision._tag === "RetryScheduled"
+    ? attempt.decision.delayMillis
+    : null,
+  traceId: trace.traceId,
+  spanId: trace.spanId,
+})
+
 interface DeliveryResultFields {
   readonly deliveryId: DeliveryId
   readonly destinationId: DestinationId
@@ -320,6 +433,7 @@ export const transitionDeliveryState = (
       }),
     Delivered: () => current,
     Rejected: () => current,
+    DeadLettered: () => current,
   })
 
 export interface DeliveryRequest {

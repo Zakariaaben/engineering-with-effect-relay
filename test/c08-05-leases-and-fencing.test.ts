@@ -190,6 +190,10 @@ describe("C08-05 claims, leases, and fencing", () => {
       const repository = DeliveryRepository.of({
         save: () => Effect.void,
         findById: () => Effect.succeed(Option.none()),
+        findStatus: () => Effect.succeed(Option.none()),
+        recordAttempt: () => Effect.void,
+        listDeadLetters: () => Effect.succeed([]),
+        retryDeadLetter: () => Effect.void,
         claimPending: () => Effect.succeed([]),
         renewClaim: (_deliveryId, current, durationMillis) =>
           Effect.sync(() => {
@@ -252,8 +256,10 @@ describe("C08-05 claims, leases, and fencing", () => {
             generation: ClaimGeneration.make(1),
             leaseExpiresAtMillis: 30_000,
           },
+          claimLagMillis: 0,
           delivery,
           event,
+          nextAttemptOrdinal: 1,
           route: Option.none(),
         }).pipe(Effect.forkChild)
 

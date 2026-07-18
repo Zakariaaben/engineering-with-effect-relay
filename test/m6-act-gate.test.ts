@@ -41,6 +41,10 @@ const makePersistenceLayer = (
         }),
       findById: (id) =>
         Effect.sync(() => Option.fromNullishOr(records.get(id))),
+      findStatus: () => Effect.succeed(Option.none()),
+      recordAttempt: () => Effect.void,
+      listDeadLetters: () => Effect.succeed([]),
+      retryDeadLetter: () => Effect.void,
       claimPending: () => Effect.succeed([]),
       renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,
@@ -71,8 +75,10 @@ const makePersistenceLayer = (
               generation: ClaimGeneration.make(1),
               leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
             }),
+            claimLagMillis: 0,
             delivery,
             event: acceptedEvent,
+            nextAttemptOrdinal: 1,
             route: Option.none(),
           }
         }).pipe(

@@ -102,6 +102,7 @@ describe("C07-07 structured delivery logs", () => {
     expect(entries.map(({ message }) => message)).toEqual([
       "delivery.intent.persisted",
       "delivery.attempt.finished",
+      "delivery.dead_lettered",
     ])
     expect(entries[1]).toEqual(expect.objectContaining({
       level: "WARN",
@@ -112,6 +113,15 @@ describe("C07-07 structured delivery logs", () => {
         "relay.attempt_number": 1,
         "relay.attempt_outcome": "TransportFailure",
         "relay.attempt_decision": "Exhausted",
+        "relay.claim_owner": "wrk-logging",
+        "relay.claim_generation": 1,
+      }),
+    }))
+    expect(entries[2]).toEqual(expect.objectContaining({
+      level: "WARN",
+      annotations: expect.objectContaining({
+        "relay.dead_letter_reason": "RetryBudgetExhausted",
+        "relay.attempt_count": 1,
       }),
     }))
 

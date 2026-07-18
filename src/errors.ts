@@ -66,9 +66,23 @@ export class ClaimLostError extends Schema.TaggedErrorClass<ClaimLostError>()(
     deliveryId: DeliveryId,
     ownerId: WorkerId,
     generation: ClaimGeneration,
-    operation: Schema.Literals(["renew", "complete", "release"]),
+    operation: Schema.Literals([
+      "renew",
+      "recordAttempt",
+      "complete",
+      "release",
+    ]),
   },
 ) {}
+
+export class DeadLetterRecoveryError extends
+  Schema.TaggedErrorClass<DeadLetterRecoveryError>()(
+    "DeadLetterRecoveryError",
+    {
+      deliveryId: DeliveryId,
+      reason: Schema.Literal("NotDeadLettered"),
+    },
+  ) {}
 
 export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRepositoryError>()(
   "DeliveryRepositoryError",
@@ -76,6 +90,10 @@ export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRep
     operation: Schema.Literals([
       "save",
       "findById",
+      "findStatus",
+      "recordAttempt",
+      "listDeadLetters",
+      "retryDeadLetter",
       "claimPending",
       "renewClaim",
       "completeClaim",

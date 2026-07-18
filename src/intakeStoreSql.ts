@@ -295,8 +295,10 @@ export const makeRelayIntakeStoreSql = (
 
           return {
             claim,
+            claimLagMillis: 0,
             delivery,
             event,
+            nextAttemptOrdinal: 1,
             route: Option.none(),
           }
         }),

@@ -61,8 +61,10 @@ const makePersistenceLayer = (
           claims.set(delivery.id, claim)
           return {
             claim,
+            claimLagMillis: 0,
             delivery,
             event: acceptedEvent,
+            nextAttemptOrdinal: 1,
             route: Option.none(),
           }
         }),
@@ -77,6 +79,10 @@ const makePersistenceLayer = (
         }),
       findById: (id) =>
         Effect.sync(() => Option.fromNullishOr(deliveries.get(id))),
+      findStatus: () => Effect.succeed(Option.none()),
+      recordAttempt: () => Effect.void,
+      listDeadLetters: () => Effect.succeed([]),
+      retryDeadLetter: () => Effect.void,
       claimPending: () => Effect.succeed([]),
       renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,
@@ -137,8 +143,10 @@ describe("C07-12 startup readiness and shutdown", () => {
                     generation: ClaimGeneration.make(1),
                     leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
                   }),
+                  claimLagMillis: 0,
                   delivery,
                   event: acceptedEvent,
+                  nextAttemptOrdinal: 1,
                   route: Option.none(),
                 }
               }),

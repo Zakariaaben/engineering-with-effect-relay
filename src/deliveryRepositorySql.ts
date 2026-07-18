@@ -4,24 +4,29 @@ import * as SqlClient from "effect/unstable/sql/SqlClient"
 import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 import {
   ClaimLostError,
+  DeadLetterRecoveryError,
   DeliveryRepositoryError,
 } from "./errors.ts"
 import {
   AmountCents,
   ClaimGeneration,
   ConfigurationVersion,
+  DeadLetterReason,
   Delivery,
+  DeliveryAttemptRecord,
   DeliveryClaim,
   DeliveryId,
   DeliveryResult,
   DeliveryRouteSnapshot,
   DeliveryState,
+  DeliveryStatus,
   DestinationId,
   EventId,
   InvoiceId,
   RelayEvent,
   WorkerId,
   type Delivery as DeliveryValue,
+  type DeliveryAttemptRecord as DeliveryAttemptRecordValue,
   type DeliveryClaim as DeliveryClaimValue,
   type DeliveryResult as DeliveryResultValue,
 } from "./model.ts"
@@ -41,16 +46,25 @@ export const DeliveryRow = Schema.Union([
     ...DeliveryRowFields,
     state: Schema.Literal("Pending"),
     status: Schema.Null,
+    dead_letter_reason: Schema.Null,
   }),
   Schema.Struct({
     ...DeliveryRowFields,
     state: Schema.Literal("Delivered"),
     status: Schema.Int,
+    dead_letter_reason: Schema.Null,
   }),
   Schema.Struct({
     ...DeliveryRowFields,
     state: Schema.Literal("Rejected"),
     status: Schema.Int,
+    dead_letter_reason: Schema.Null,
+  }),
+  Schema.Struct({
+    ...DeliveryRowFields,
+    state: Schema.Literal("DeadLettered"),
+    status: Schema.Null,
+    dead_letter_reason: DeadLetterReason,
   }),
 ])
 export type DeliveryRow = Schema.Schema.Type<typeof DeliveryRow>
@@ -105,6 +119,8 @@ export const ClaimedDeliveryRow = Schema.Struct({
   amount_cents: AmountCents,
   destination_url: Schema.NullOr(Schema.URLFromString),
   configuration_version: Schema.NullOr(ConfigurationVersion),
+  claim_lag_ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  next_attempt_ordinal: PositiveInteger,
   ...DeliveryClaimRow.fields,
 })
 export type ClaimedDeliveryRow = Schema.Schema.Type<
@@ -123,6 +139,7 @@ export const deliveryToRow = (delivery: DeliveryValue): DeliveryRow =>
       destination_id: delivery.destinationId,
       state: "Pending",
       status: null,
+      dead_letter_reason: null,
     }),
     Delivered: ({ status }) => ({
       delivery_id: delivery.id,
@@ -130,6 +147,7 @@ export const deliveryToRow = (delivery: DeliveryValue): DeliveryRow =>
       destination_id: delivery.destinationId,
       state: "Delivered",
       status,
+      dead_letter_reason: null,
     }),
     Rejected: ({ status }) => ({
       delivery_id: delivery.id,
@@ -137,6 +155,15 @@ export const deliveryToRow = (delivery: DeliveryValue): DeliveryRow =>
       destination_id: delivery.destinationId,
       state: "Rejected",
       status,
+      dead_letter_reason: null,
+    }),
+    DeadLettered: ({ reason }) => ({
+      delivery_id: delivery.id,
+      event_id: delivery.eventId,
+      destination_id: delivery.destinationId,
+      state: "DeadLettered",
+      status: null,
+      dead_letter_reason: reason,
     }),
   })
 
@@ -145,7 +172,11 @@ export const rowToDelivery = (row: DeliveryRow): DeliveryValue => {
     ? DeliveryState.cases.Pending.make({})
     : row.state === "Delivered"
     ? DeliveryState.cases.Delivered.make({ status: row.status })
-    : DeliveryState.cases.Rejected.make({ status: row.status })
+    : row.state === "Rejected"
+    ? DeliveryState.cases.Rejected.make({ status: row.status })
+    : DeliveryState.cases.DeadLettered.make({
+        reason: row.dead_letter_reason,
+      })
 
   return Delivery.make({
     id: row.delivery_id,
@@ -179,6 +210,8 @@ export const rowToClaimedDelivery = (
     invoiceId: row.invoice_id,
     amountCents: row.amount_cents,
   }),
+  claimLagMillis: row.claim_lag_ms,
+  nextAttemptOrdinal: row.next_attempt_ordinal,
   route:
     row.destination_url !== null && row.configuration_version !== null
       ? Option.some(DeliveryRouteSnapshot.make({
@@ -191,8 +224,14 @@ export const rowToClaimedDelivery = (
 
 const DeliveryCompletionRequest = Schema.Struct({
   ...DeliveryClaimMutation.fields,
-  state: Schema.Literals(["Pending", "Delivered", "Rejected"]),
+  state: Schema.Literals([
+    "Pending",
+    "Delivered",
+    "Rejected",
+    "DeadLettered",
+  ]),
   status: Schema.NullOr(Schema.Int),
+  dead_letter_reason: Schema.NullOr(DeadLetterReason),
 })
 export type DeliveryCompletionRow = Schema.Schema.Type<
   typeof DeliveryCompletionRequest
@@ -216,28 +255,99 @@ export const deliveryCompletionRow = (
       ...base,
       state: "Delivered",
       status,
+      dead_letter_reason: null,
     }),
     Rejected: ({ status }): DeliveryCompletionRow => ({
       ...base,
       state: "Rejected",
       status,
+      dead_letter_reason: null,
     }),
     ProtocolFailure: (): DeliveryCompletionRow => ({
       ...base,
-      state: "Pending",
+      state: "DeadLettered",
       status: null,
+      dead_letter_reason: "ProviderProtocolFailure",
     }),
     Exhausted: (): DeliveryCompletionRow => ({
       ...base,
-      state: "Pending",
+      state: "DeadLettered",
       status: null,
+      dead_letter_reason: "RetryBudgetExhausted",
     }),
   })
 }
 
+const DeliveryAttemptRow = Schema.Struct({
+  delivery_id: DeliveryId,
+  ordinal: PositiveInteger,
+  claim_owner: WorkerId,
+  claim_generation: ClaimGeneration,
+  started_at_ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  completed_at_ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  outcome: DeliveryAttemptRecord.fields.outcome,
+  decision: DeliveryAttemptRecord.fields.decision,
+  status: Schema.NullOr(Schema.Int),
+  retry_delay_ms: Schema.NullOr(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  ),
+  trace_id: DeliveryAttemptRecord.fields.traceId,
+  span_id: DeliveryAttemptRecord.fields.spanId,
+})
+type DeliveryAttemptRow = Schema.Schema.Type<typeof DeliveryAttemptRow>
+type DeliveryAttemptRowEncoded = Schema.Codec.Encoded<
+  typeof DeliveryAttemptRow
+>
+
+const attemptToRow = (
+  attempt: DeliveryAttemptRecordValue,
+): DeliveryAttemptRow => ({
+  delivery_id: attempt.deliveryId,
+  ordinal: attempt.ordinal,
+  claim_owner: attempt.workerId,
+  claim_generation: attempt.claimGeneration,
+  started_at_ms: attempt.startedAtMillis,
+  completed_at_ms: attempt.completedAtMillis,
+  outcome: attempt.outcome,
+  decision: attempt.decision,
+  status: attempt.status,
+  retry_delay_ms: attempt.retryDelayMillis,
+  trace_id: attempt.traceId,
+  span_id: attempt.spanId,
+})
+
+const rowToAttempt = (
+  row: DeliveryAttemptRow,
+): DeliveryAttemptRecordValue => DeliveryAttemptRecord.make({
+  deliveryId: row.delivery_id,
+  ordinal: row.ordinal,
+  workerId: row.claim_owner,
+  claimGeneration: row.claim_generation,
+  startedAtMillis: row.started_at_ms,
+  completedAtMillis: row.completed_at_ms,
+  outcome: row.outcome,
+  decision: row.decision,
+  status: row.status,
+  retryDelayMillis: row.retry_delay_ms,
+  traceId: row.trace_id,
+  spanId: row.span_id,
+})
+
 export interface DeliverySqlStatements<E = never> {
   readonly save: (row: DeliveryRowEncoded) => Effect.Effect<unknown, E>
   readonly findById: (
+    id: string,
+  ) => Effect.Effect<ReadonlyArray<unknown>, E>
+  readonly findAttempts: (
+    id: string,
+  ) => Effect.Effect<ReadonlyArray<unknown>, E>
+  readonly recordAttempt: (
+    row: DeliveryAttemptRowEncoded,
+  ) => Effect.Effect<ReadonlyArray<unknown>, E>
+  readonly listDeadLetters: (
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<unknown>, E>
+  readonly retryDeadLetter: (
     id: string,
   ) => Effect.Effect<ReadonlyArray<unknown>, E>
   readonly claimPending: (
@@ -258,6 +368,10 @@ const repositoryError = (
   operation:
     | "save"
     | "findById"
+    | "findStatus"
+    | "recordAttempt"
+    | "listDeadLetters"
+    | "retryDeadLetter"
     | "claimPending"
     | "renewClaim"
     | "completeClaim"
@@ -266,7 +380,7 @@ const repositoryError = (
 ) => new DeliveryRepositoryError({ operation, cause })
 
 const claimLost = (
-  operation: "renew" | "complete" | "release",
+  operation: "renew" | "recordAttempt" | "complete" | "release",
   deliveryId: DeliveryId,
   claim: DeliveryClaimValue,
 ) => new ClaimLostError({
@@ -287,6 +401,27 @@ export const makeDeliveryRepositorySql = <E>(
     Request: DeliveryId,
     Result: DeliveryRow,
     execute: statements.findById,
+  })
+  const findAttemptRows = SqlSchema.findAll({
+    Request: DeliveryId,
+    Result: DeliveryAttemptRow,
+    execute: statements.findAttempts,
+  })
+  const recordAttemptRow = SqlSchema.findOneOption({
+    Request: DeliveryAttemptRow,
+    Result: DeliveryMutationResult,
+    execute: statements.recordAttempt,
+  })
+  const DeadLetterListRequest = Schema.Int.check(Schema.isGreaterThan(0))
+  const listDeadLetterRows = SqlSchema.findAll({
+    Request: DeadLetterListRequest,
+    Result: DeliveryRow,
+    execute: statements.listDeadLetters,
+  })
+  const retryDeadLetterRow = SqlSchema.findOneOption({
+    Request: DeliveryId,
+    Result: DeliveryMutationResult,
+    execute: statements.retryDeadLetter,
   })
   const claimRows = SqlSchema.findAll({
     Request: DeliveryClaimRequest,
@@ -322,6 +457,75 @@ export const makeDeliveryRepositorySql = <E>(
         Effect.mapError((cause) => repositoryError("findById", cause)),
       ),
   )
+  const findStatus = Effect.fn("DeliveryRepositorySql.findStatus")(
+    (id: DeliveryId) =>
+      findRowById(id).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeed(Option.none()),
+            onSome: (row) =>
+              findAttemptRows(id).pipe(
+                Effect.map((attempts) => Option.some(DeliveryStatus.make({
+                  delivery: rowToDelivery(row),
+                  attempts: attempts.map(rowToAttempt),
+                }))),
+              ),
+          }),
+        ),
+        Effect.mapError((cause) => repositoryError("findStatus", cause)),
+      ),
+  )
+  const recordAttempt = Effect.fn("DeliveryRepositorySql.recordAttempt")(
+    (attempt: DeliveryAttemptRecordValue) =>
+      recordAttemptRow(attemptToRow(attempt)).pipe(
+        Effect.mapError((cause) => repositoryError("recordAttempt", cause)),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(
+              claimLost(
+                "recordAttempt",
+                attempt.deliveryId,
+                DeliveryClaim.make({
+                  ownerId: attempt.workerId,
+                  generation: attempt.claimGeneration,
+                  leaseExpiresAtMillis: 0,
+                }),
+              ),
+            ),
+            onSome: () => Effect.void,
+          }),
+        ),
+      ),
+  )
+  const listDeadLetters = Effect.fn(
+    "DeliveryRepositorySql.listDeadLetters",
+  )((limit: number) =>
+    listDeadLetterRows(limit).pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          findAttemptRows(row.delivery_id).pipe(
+            Effect.map((attempts) => DeliveryStatus.make({
+              delivery: rowToDelivery(row),
+              attempts: attempts.map(rowToAttempt),
+            }))))
+      ),
+      Effect.mapError((cause) => repositoryError("listDeadLetters", cause)),
+    ))
+  const retryDeadLetter = Effect.fn(
+    "DeliveryRepositorySql.retryDeadLetter",
+  )((id: DeliveryId) =>
+    retryDeadLetterRow(id).pipe(
+      Effect.mapError((cause) => repositoryError("retryDeadLetter", cause)),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new DeadLetterRecoveryError({
+            deliveryId: id,
+            reason: "NotDeadLettered",
+          })),
+          onSome: () => Effect.void,
+        }),
+      ),
+    ))
   const claimPending = Effect.fn("DeliveryRepositorySql.claimPending")(
     (
       ownerId: WorkerId,
@@ -402,6 +606,10 @@ export const makeDeliveryRepositorySql = <E>(
   return DeliveryRepository.of({
     save,
     findById,
+    findStatus,
+    recordAttempt,
+    listDeadLetters,
+    retryDeadLetter,
     claimPending,
     renewClaim,
     completeClaim,
@@ -420,13 +628,15 @@ export const DeliveryRepositorySql = Layer.effect(
             event_id,
             destination_id,
             state,
-            status
+            status,
+            dead_letter_reason
           ) VALUES (
             ${row.delivery_id},
             ${row.event_id},
             ${row.destination_id},
             ${row.state},
-            ${row.status}
+            ${row.status},
+            ${row.dead_letter_reason}
           )
           ON CONFLICT (delivery_id) DO NOTHING
         `.raw,
@@ -437,9 +647,116 @@ export const DeliveryRepositorySql = Layer.effect(
             event_id,
             destination_id,
             state,
-            status
+            status,
+            dead_letter_reason
           FROM deliveries
           WHERE delivery_id = ${id}
+        `,
+      findAttempts: (id) =>
+        sql<Record<string, unknown>>`
+          SELECT
+            delivery_id,
+            ordinal,
+            claim_owner,
+            claim_generation,
+            started_at_ms,
+            completed_at_ms,
+            outcome,
+            decision,
+            status,
+            retry_delay_ms,
+            trace_id,
+            span_id
+          FROM delivery_attempts
+          WHERE delivery_id = ${id}
+          ORDER BY ordinal
+        `,
+      recordAttempt: (row) =>
+        sql<Record<string, unknown>>`
+          WITH claim_clock AS (
+            SELECT floor(
+              extract(epoch FROM clock_timestamp()) * 1000
+            )::bigint AS now_ms
+          ), owned_delivery AS (
+            UPDATE deliveries AS delivery
+            SET next_eligible_at_ms = CASE
+              WHEN ${row.decision} = 'RetryScheduled'
+                THEN ${row.completed_at_ms} + ${row.retry_delay_ms}
+              ELSE delivery.next_eligible_at_ms
+            END
+            FROM claim_clock
+            WHERE
+              delivery.delivery_id = ${row.delivery_id}
+              AND delivery.state = 'Pending'
+              AND delivery.claim_owner = ${row.claim_owner}
+              AND delivery.claim_generation = ${row.claim_generation}
+              AND delivery.lease_expires_at_ms > claim_clock.now_ms
+            RETURNING delivery.delivery_id
+          )
+          INSERT INTO delivery_attempts (
+            delivery_id,
+            ordinal,
+            claim_owner,
+            claim_generation,
+            started_at_ms,
+            completed_at_ms,
+            outcome,
+            decision,
+            status,
+            retry_delay_ms,
+            trace_id,
+            span_id
+          )
+          SELECT
+            ${row.delivery_id},
+            ${row.ordinal},
+            ${row.claim_owner},
+            ${row.claim_generation},
+            ${row.started_at_ms},
+            ${row.completed_at_ms},
+            ${row.outcome},
+            ${row.decision},
+            ${row.status},
+            ${row.retry_delay_ms},
+            ${row.trace_id},
+            ${row.span_id}
+          FROM owned_delivery
+          RETURNING delivery_id
+        `,
+      listDeadLetters: (limit) =>
+        sql<Record<string, unknown>>`
+          SELECT
+            delivery_id,
+            event_id,
+            destination_id,
+            state,
+            status,
+            dead_letter_reason
+          FROM deliveries
+          WHERE state = 'DeadLettered'
+          ORDER BY delivery_id
+          LIMIT ${limit}
+        `,
+      retryDeadLetter: (id) =>
+        sql<Record<string, unknown>>`
+          WITH claim_clock AS (
+            SELECT floor(
+              extract(epoch FROM clock_timestamp()) * 1000
+            )::bigint AS now_ms
+          )
+          UPDATE deliveries AS delivery
+          SET
+            state = 'Pending',
+            status = NULL,
+            dead_letter_reason = NULL,
+            claim_owner = NULL,
+            lease_expires_at_ms = NULL,
+            next_eligible_at_ms = claim_clock.now_ms
+          FROM claim_clock
+          WHERE
+            delivery.delivery_id = ${id}
+            AND delivery.state = 'DeadLettered'
+          RETURNING delivery.delivery_id
         `,
       claimPending: ({
         owner_id,
@@ -460,6 +777,7 @@ export const DeliveryRepositorySql = Layer.effect(
               WHERE
                 delivery.state = 'Pending'
                 AND delivery.destination_id = ${destination_id}
+                AND delivery.next_eligible_at_ms <= claim_clock.now_ms
                 AND (
                   delivery.claim_owner IS NULL
                   OR delivery.lease_expires_at_ms <= claim_clock.now_ms
@@ -482,7 +800,9 @@ export const DeliveryRepositorySql = Layer.effect(
                 delivery.destination_id,
                 delivery.claim_owner,
                 delivery.claim_generation,
-                delivery.lease_expires_at_ms
+                delivery.lease_expires_at_ms,
+                delivery.next_eligible_at_ms,
+                claim_clock.now_ms AS claimed_at_ms
             )
             SELECT
               claimed_deliveries.delivery_id,
@@ -493,12 +813,21 @@ export const DeliveryRepositorySql = Layer.effect(
               relay_events.amount_cents,
               delivery.destination_url,
               delivery.configuration_version,
+              claimed_deliveries.claimed_at_ms -
+                claimed_deliveries.next_eligible_at_ms AS claim_lag_ms,
+              COALESCE(attempts.next_attempt_ordinal, 1)
+                AS next_attempt_ordinal,
               claimed_deliveries.claim_owner,
               claimed_deliveries.claim_generation,
               claimed_deliveries.lease_expires_at_ms
             FROM claimed_deliveries
             INNER JOIN deliveries AS delivery USING (delivery_id)
             INNER JOIN relay_events USING (event_id)
+            LEFT JOIN LATERAL (
+              SELECT MAX(ordinal) + 1 AS next_attempt_ordinal
+              FROM delivery_attempts
+              WHERE delivery_id = claimed_deliveries.delivery_id
+            ) AS attempts ON TRUE
             ORDER BY claimed_deliveries.delivery_id
           `,
         ),
@@ -540,6 +869,7 @@ export const DeliveryRepositorySql = Layer.effect(
           SET
             state = ${row.state},
             status = ${row.status},
+            dead_letter_reason = ${row.dead_letter_reason},
             claim_owner = NULL,
             lease_expires_at_ms = NULL
           FROM claim_clock

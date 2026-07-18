@@ -16,6 +16,10 @@ import {
 import { delivery, event } from "./fixtures.ts"
 
 const recoveryStatements = {
+  findAttempts: () => Effect.succeed([]),
+  recordAttempt: () => Effect.succeed([]),
+  listDeadLetters: () => Effect.succeed([]),
+  retryDeadLetter: () => Effect.succeed([]),
   claimPending: () => Effect.succeed([]),
   renewClaim: () => Effect.succeed([]),
   completeClaim: () => Effect.succeed([]),
@@ -53,6 +57,7 @@ describe("C07-04 SQL repository boundary", () => {
           destination_id: String(delivery.destinationId),
           state: "Pending",
           status: 202,
+          dead_letter_reason: null,
         }]),
     })
 
@@ -81,6 +86,8 @@ describe("C07-04 SQL repository boundary", () => {
           amount_cents: event.amountCents,
           destination_url: null,
           configuration_version: null,
+          claim_lag_ms: 0,
+          next_attempt_ordinal: 1,
           claim_owner: String(workerId),
           claim_generation: Number(claim.generation),
           lease_expires_at_ms: claim.leaseExpiresAtMillis,
@@ -105,8 +112,10 @@ describe("C07-04 SQL repository boundary", () => {
     })
     expect(claimed).toEqual([{
       claim,
+      claimLagMillis: 0,
       delivery,
       event,
+      nextAttemptOrdinal: 1,
       route: Option.none(),
     }])
   })

@@ -95,6 +95,10 @@ const makePersistenceLayer = (
       }),
     findById: (id) =>
       Effect.sync(() => Option.fromNullishOr(state.deliveries.get(id))),
+    findStatus: () => Effect.succeed(Option.none()),
+    recordAttempt: () => Effect.void,
+    listDeadLetters: () => Effect.succeed([]),
+    retryDeadLetter: () => Effect.void,
     claimPending: (ownerId, destinationId, limit, leaseDurationMillis) =>
       Effect.sync(() => {
         state.observedClaimLimits.push(limit)
@@ -125,8 +129,10 @@ const makePersistenceLayer = (
           state.claims.set(delivery.id, claim)
           claimed.push({
             claim,
+            claimLagMillis: 0,
             delivery,
             event: acceptedEvent,
+            nextAttemptOrdinal: 1,
             route: Option.none(),
           })
         }
@@ -208,8 +214,10 @@ const makePersistenceLayer = (
         state.claims.set(delivery.id, claim)
         return {
           claim,
+          claimLagMillis: 0,
           delivery,
           event: acceptedEvent,
+          nextAttemptOrdinal: 1,
           route: Option.none(),
         }
       }).pipe(
@@ -308,6 +316,10 @@ describe("C08-02 durable reconciliation", () => {
     const repository = DeliveryRepository.of({
       save: () => Effect.void,
       findById: () => Effect.succeed(Option.none()),
+      findStatus: () => Effect.succeed(Option.none()),
+      recordAttempt: () => Effect.void,
+      listDeadLetters: () => Effect.succeed([]),
+      retryDeadLetter: () => Effect.void,
       claimPending: () => Effect.succeed([]),
       renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,

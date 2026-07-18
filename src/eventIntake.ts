@@ -135,8 +135,10 @@ export const EventIntakeLive = Layer.effect(
         if (IntakeDecision.$is("Accepted")(decision)) {
           yield* supervisor.enqueueClaimed({
             claim: decision.claim,
+            claimLagMillis: 0,
             delivery: decision.delivery,
             event: decision.event,
+            nextAttemptOrdinal: 1,
             route: Option.some(decision.route),
           })
         }

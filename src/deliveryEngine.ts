@@ -4,6 +4,7 @@ import {
   Data,
   Duration,
   Effect,
+  Pull,
   Random,
   Ref,
   Schedule,
@@ -141,10 +142,6 @@ export const observeDeliveryAttempt = Effect.fn(
 const makeRetrySchedule = (
   resilience: DeliveryResilience,
   deliveryStartedAtNanos: bigint,
-  onRetry: (
-    attempt: AttemptObservation,
-    delayMillis: number,
-  ) => Effect.Effect<void>,
 ) => {
   const deadline = deliveryStartedAtNanos +
     Duration.toNanosUnsafe(resilience.maxElapsed)
@@ -197,15 +194,12 @@ const makeRetrySchedule = (
         ),
       ),
     ),
-    Schedule.tap(({ duration, input }) =>
-      onRetry(input.attempt, Duration.toMillis(duration)),
-    ),
   )
 }
 
 export const runDeliveryWithRetry = Effect.fn(
   "DeliveryEngine.runDeliveryWithRetry",
-)(function* (
+)(function* <E>(
   deliveryId: DeliveryId,
   destinationId: DestinationId,
   resilience: DeliveryResilience,
@@ -215,12 +209,13 @@ export const runDeliveryWithRetry = Effect.fn(
   ) => Effect.Effect<AttemptObservation>,
   onAttempt: (
     attempt: DeliveryAttempt,
-  ) => Effect.Effect<void> = () => Effect.void,
+  ) => Effect.Effect<void, E> = () => Effect.void,
+  firstOrdinal = 1,
 ) {
   const deliveryStartedAtNanos = yield* Clock.currentTimeNanos
   const deadline = deliveryStartedAtNanos +
     Duration.toNanosUnsafe(resilience.maxElapsed)
-  const nextOrdinal = yield* Ref.make(0)
+  const nextOrdinal = yield* Ref.make(firstOrdinal - 1)
   const history = yield* Ref.make<ReadonlyArray<DeliveryAttempt>>([])
   const append = (attempt: DeliveryAttempt) =>
     Ref.update(history, (current) => [...current, attempt]).pipe(
@@ -228,68 +223,79 @@ export const runDeliveryWithRetry = Effect.fn(
       Effect.andThen(onAttempt(attempt)),
     )
 
-  const execute = Effect.gen(function* () {
-    const ordinal = yield* Ref.updateAndGet(
-      nextOrdinal,
-      (current) => current + 1,
-    )
-    const attemptStartedAtNanos = yield* Clock.currentTimeNanos
-    const attempt = yield* executeAttempt(
-      ordinal,
-      Duration.nanos(
-        attemptStartedAtNanos < deadline
-          ? deadline - attemptStartedAtNanos
-          : 0n,
-      ),
-    )
-    if (isRetryable(attempt.outcome)) {
-      return yield* Effect.fail(new RetryableAttempt({ attempt }))
-    }
-
-    yield* append(
-      withDecision(attempt, DeliveryAttemptDecision.Terminal()),
-    )
-    const attempts = yield* Ref.get(history)
-    return terminalResult(
-      deliveryId,
-      destinationId,
-      attempt.outcome,
-      attempts,
-    )
-  })
-
   const schedule = makeRetrySchedule(
     resilience,
     deliveryStartedAtNanos,
-    (attempt, delayMillis) =>
-      append(
-        withDecision(
-          attempt,
-          DeliveryAttemptDecision.RetryScheduled({
-            delayMillis,
-          }),
-        ),
-      ),
   )
+  const step = yield* Schedule.toStep(schedule)
 
-  return yield* execute.pipe(
-    Effect.retryOrElse(
-      schedule,
-      (lastFailure) =>
-        Effect.gen(function* () {
-          const exhausted = withDecision(
-            lastFailure.attempt,
-            DeliveryAttemptDecision.Exhausted(),
-          )
-          yield* append(exhausted)
-          const attempts = yield* Ref.get(history)
-          return DeliveryResult.Exhausted({
-            deliveryId,
-            destinationId,
-            attempts,
-            lastOutcome: exhausted.outcome,
-          })
+  const run: () => Effect.Effect<DeliveryResultType, E> = () =>
+    Effect.gen(function* () {
+      const ordinal = yield* Ref.updateAndGet(
+        nextOrdinal,
+        (current) => current + 1,
+      )
+      const attemptStartedAtNanos = yield* Clock.currentTimeNanos
+      const attempt = yield* executeAttempt(
+        ordinal,
+        Duration.nanos(
+          attemptStartedAtNanos < deadline
+            ? deadline - attemptStartedAtNanos
+            : 0n,
+        ),
+      )
+
+      if (!isRetryable(attempt.outcome)) {
+        yield* append(
+          withDecision(attempt, DeliveryAttemptDecision.Terminal()),
+        )
+        const attempts = yield* Ref.get(history)
+        return terminalResult(
+          deliveryId,
+          destinationId,
+          attempt.outcome,
+          attempts,
+        )
+      }
+
+      const nowMillis = yield* Clock.currentTimeMillis
+      return yield* step(
+        nowMillis,
+        new RetryableAttempt({ attempt }),
+      ).pipe(
+        Pull.matchEffect({
+          onFailure: Effect.failCause,
+          onDone: () =>
+            Effect.gen(function* () {
+              const exhausted = withDecision(
+                attempt,
+                DeliveryAttemptDecision.Exhausted(),
+              )
+              yield* append(exhausted)
+              const attempts = yield* Ref.get(history)
+              return DeliveryResult.Exhausted({
+                deliveryId,
+                destinationId,
+                attempts,
+                lastOutcome: exhausted.outcome,
+              })
+            }),
+          onSuccess: ([, delay]) =>
+            Effect.gen(function* () {
+              yield* append(
+                withDecision(
+                  attempt,
+                  DeliveryAttemptDecision.RetryScheduled({
+                    delayMillis: Duration.toMillis(delay),
+                  }),
+                ),
+              )
+              yield* Effect.sleep(delay)
+              return yield* run()
+            }),
         }),
-    ),
-  )
+      )
+    })
+
+  return yield* run()
 })

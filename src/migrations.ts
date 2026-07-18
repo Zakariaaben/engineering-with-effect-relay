@@ -138,11 +138,138 @@ export const addLeasedClaims = Effect.gen(function* () {
   `
 })
 
+export const addAttemptsAndDeadLetters = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  yield* sql`
+    ALTER TABLE deliveries
+    DROP CONSTRAINT deliveries_state_check,
+    DROP CONSTRAINT deliveries_state_status_check,
+    ADD COLUMN next_eligible_at_ms bigint NOT NULL DEFAULT (
+      floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+    ),
+    ADD COLUMN dead_letter_reason text,
+    ADD CONSTRAINT deliveries_next_eligible_check CHECK (
+      next_eligible_at_ms >= 0
+    ),
+    ADD CONSTRAINT deliveries_state_check CHECK (
+      state IN ('Pending', 'Delivered', 'Rejected', 'DeadLettered')
+    ),
+    ADD CONSTRAINT deliveries_state_status_check CHECK (
+      (
+        state = 'Pending'
+        AND status IS NULL
+        AND dead_letter_reason IS NULL
+      )
+      OR
+      (
+        state IN ('Delivered', 'Rejected')
+        AND status IS NOT NULL
+        AND dead_letter_reason IS NULL
+      )
+      OR
+      (
+        state = 'DeadLettered'
+        AND status IS NULL
+        AND dead_letter_reason IN (
+          'ProviderProtocolFailure',
+          'RetryBudgetExhausted'
+        )
+      )
+    )
+  `
+
+  yield* sql`
+    CREATE TABLE delivery_attempts (
+      delivery_id text NOT NULL REFERENCES deliveries(delivery_id),
+      ordinal integer NOT NULL CHECK (ordinal > 0),
+      claim_owner text NOT NULL,
+      claim_generation bigint NOT NULL CHECK (claim_generation > 0),
+      started_at_ms bigint NOT NULL CHECK (started_at_ms >= 0),
+      completed_at_ms bigint NOT NULL,
+      outcome text NOT NULL CHECK (
+        outcome IN (
+          'Delivered',
+          'Rejected',
+          'Retryable',
+          'ProtocolFailure',
+          'TransportFailure',
+          'TimedOut'
+        )
+      ),
+      decision text NOT NULL CHECK (
+        decision IN ('Terminal', 'RetryScheduled', 'Exhausted')
+      ),
+      status integer,
+      retry_delay_ms bigint,
+      trace_id text,
+      span_id text,
+      PRIMARY KEY (delivery_id, ordinal),
+      CONSTRAINT delivery_attempts_time_check CHECK (
+        completed_at_ms >= started_at_ms
+      ),
+      CONSTRAINT delivery_attempts_retry_delay_check CHECK (
+        (
+          decision = 'RetryScheduled'
+          AND retry_delay_ms IS NOT NULL
+          AND retry_delay_ms >= 0
+        )
+        OR
+        (decision <> 'RetryScheduled' AND retry_delay_ms IS NULL)
+      ),
+      CONSTRAINT delivery_attempts_status_check CHECK (
+        (
+          outcome IN (
+            'Delivered',
+            'Rejected',
+            'Retryable',
+            'ProtocolFailure'
+          )
+          AND status IS NOT NULL
+        )
+        OR
+        (
+          outcome IN ('TransportFailure', 'TimedOut')
+          AND status IS NULL
+        )
+      ),
+      CONSTRAINT delivery_attempts_decision_check CHECK (
+        (
+          decision = 'Terminal'
+          AND outcome IN ('Delivered', 'Rejected', 'ProtocolFailure')
+        )
+        OR
+        (
+          decision IN ('RetryScheduled', 'Exhausted')
+          AND outcome IN ('Retryable', 'TransportFailure', 'TimedOut')
+        )
+      ),
+      CONSTRAINT delivery_attempts_trace_check CHECK (
+        (trace_id IS NULL AND span_id IS NULL)
+        OR
+        (
+          trace_id ~ '^[0-9a-f]{32}$'
+          AND trace_id <> repeat('0', 32)
+          AND span_id ~ '^[0-9a-f]{16}$'
+          AND span_id <> repeat('0', 16)
+        )
+      )
+    )
+  `
+
+  yield* sql`
+    CREATE INDEX deliveries_dead_letter_idx
+    ON deliveries (delivery_id)
+    WHERE state = 'DeadLettered'
+  `
+})
+
 export const RelayMigrations = Migrator.fromRecord({
   "0001_create_relay_tables": createRelayTables,
   "0002_add_delivery_claims": addDeliveryClaims,
   "0003_atomic_intake": addAtomicIntake,
   "0004_leased_claims": addLeasedClaims,
+  "0005_attempts_and_dead_letters": addAttemptsAndDeadLetters,
 })
 
 export const RelayMigrationsLive = Layer.effectDiscard(
