@@ -32,7 +32,9 @@ import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import {
   DeliveryId,
   DeliveryOutcome,
+  WorkerId,
 } from "../src/model.ts"
+import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 import { destination, event, makeGate } from "./fixtures.ts"
 import { reproduceImmediateRetryStorm } from "./incidents/unboundedRetryStorm.ts"
 
@@ -83,6 +85,7 @@ const makeM4Layer = (
     ),
     Layer.succeed(Crypto.Crypto, makeTestCrypto()),
     RelayIntakeStoreMemory,
+    makeWorkerIdentityLayer(WorkerId.make("wrk-m4-gate")),
   )
   const supervisor = DeliverySupervisorLive.pipe(
     Layer.provide(DeliveryEventsLive),

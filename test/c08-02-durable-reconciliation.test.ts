@@ -18,11 +18,14 @@ import {
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
 import {
   Delivery,
+  ClaimGeneration,
+  DeliveryClaim,
   type DeliveryId,
   type DeliveryResult,
   DeliveryState,
   type EventId,
   type RelayEvent,
+  WorkerId,
 } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import { makeReconcilerLive } from "../src/reconciler.ts"
@@ -30,6 +33,7 @@ import {
   DeliveryRepository,
   RelayIntakeStore,
 } from "../src/services.ts"
+import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 import {
   destination,
   event,
@@ -40,17 +44,21 @@ import {
 } from "./fixtures.ts"
 
 interface DurableState {
-  readonly claims: Set<DeliveryId>
+  readonly claims: Map<DeliveryId, DeliveryClaim>
   readonly deliveries: Map<DeliveryId, Delivery>
   readonly events: Map<EventId, RelayEvent>
+  readonly generations: Map<DeliveryId, number>
   readonly observedClaimLimits: Array<number>
+  nowMillis: number
 }
 
 const makeDurableState = (): DurableState => ({
-  claims: new Set(),
+  claims: new Map(),
   deliveries: new Map(),
   events: new Map(),
+  generations: new Map(),
   observedClaimLimits: [],
+  nowMillis: 0,
 })
 
 const stateAfter = (
@@ -83,11 +91,11 @@ const makePersistenceLayer = (
       Effect.sync(() => {
         state.deliveries.set(delivery.id, delivery)
         state.claims.delete(delivery.id)
+        state.generations.set(delivery.id, 0)
       }),
     findById: (id) =>
       Effect.sync(() => Option.fromNullishOr(state.deliveries.get(id))),
-    resetClaims: () => Effect.sync(() => state.claims.clear()),
-    claimPending: (destinationId, limit) =>
+    claimPending: (ownerId, destinationId, limit, leaseDurationMillis) =>
       Effect.sync(() => {
         state.observedClaimLimits.push(limit)
         const claimed = []
@@ -99,14 +107,24 @@ const makePersistenceLayer = (
             claimed.length >= limit ||
             delivery.state._tag !== "Pending" ||
             delivery.destinationId !== destinationId ||
-            state.claims.has(delivery.id)
+            (state.claims.get(delivery.id)?.leaseExpiresAtMillis ?? 0) >
+              state.nowMillis
           ) {
             continue
           }
           const acceptedEvent = state.events.get(delivery.eventId)
           if (acceptedEvent === undefined) continue
-          state.claims.add(delivery.id)
+          const generation =
+            (state.generations.get(delivery.id) ?? 0) + 1
+          const claim = DeliveryClaim.make({
+            ownerId,
+            generation: ClaimGeneration.make(generation),
+            leaseExpiresAtMillis: state.nowMillis + leaseDurationMillis,
+          })
+          state.generations.set(delivery.id, generation)
+          state.claims.set(delivery.id, claim)
           claimed.push({
+            claim,
             delivery,
             event: acceptedEvent,
             route: Option.none(),
@@ -114,10 +132,32 @@ const makePersistenceLayer = (
         }
         return claimed
       }),
-    completeClaim: (deliveryId, result) =>
+    renewClaim: (deliveryId, claim, leaseDurationMillis) =>
+      Effect.sync(() => {
+        const current = state.claims.get(deliveryId)
+        if (
+          current !== undefined &&
+          current.ownerId === claim.ownerId &&
+          current.generation === claim.generation
+        ) {
+          const renewed = DeliveryClaim.make({
+            ...claim,
+            leaseExpiresAtMillis: state.nowMillis + leaseDurationMillis,
+          })
+          state.claims.set(deliveryId, renewed)
+          return renewed
+        }
+        return claim
+      }),
+    completeClaim: (deliveryId, claim, result) =>
       Effect.gen(function* () {
         const current = state.deliveries.get(deliveryId)
-        if (current === undefined || !state.claims.has(deliveryId)) {
+        const activeClaim = state.claims.get(deliveryId)
+        if (
+          current === undefined ||
+          activeClaim?.ownerId !== claim.ownerId ||
+          activeClaim.generation !== claim.generation
+        ) {
           return
         }
         const completed = Delivery.make({
@@ -130,14 +170,25 @@ const makePersistenceLayer = (
           yield* options.onComplete(completed)
         }
       }),
-    releaseClaim: (deliveryId) =>
+    releaseClaim: (deliveryId, claim) =>
       Effect.sync(() => {
-        state.claims.delete(deliveryId)
+        const activeClaim = state.claims.get(deliveryId)
+        if (
+          activeClaim?.ownerId === claim.ownerId &&
+          activeClaim.generation === claim.generation
+        ) {
+          state.claims.delete(deliveryId)
+        }
       }),
   })
   const intake = RelayIntakeStore.of({
     accept: () => Effect.die(new Error("not used by this gate")),
-    savePending: (acceptedEvent, deliveryId, destinationId) => {
+    savePending: (
+      acceptedEvent,
+      deliveryId,
+      destinationId,
+      claimRequest,
+    ) => {
       const delivery = Delivery.make({
         id: deliveryId,
         eventId: acceptedEvent.id,
@@ -147,11 +198,23 @@ const makePersistenceLayer = (
       return Effect.sync(() => {
         state.events.set(acceptedEvent.id, acceptedEvent)
         state.deliveries.set(delivery.id, delivery)
-        state.claims.add(delivery.id)
-        return delivery
+        const claim = DeliveryClaim.make({
+          ownerId: claimRequest.ownerId,
+          generation: ClaimGeneration.make(1),
+          leaseExpiresAtMillis:
+            state.nowMillis + claimRequest.leaseDurationMillis,
+        })
+        state.generations.set(delivery.id, 1)
+        state.claims.set(delivery.id, claim)
+        return {
+          claim,
+          delivery,
+          event: acceptedEvent,
+          route: Option.none(),
+        }
       }).pipe(
         Effect.tap((persisted) =>
-          options.afterCommit?.(persisted) ?? Effect.void
+          options.afterCommit?.(persisted.delivery) ?? Effect.void
         ),
       )
     },
@@ -207,6 +270,11 @@ describe("C08-02 durable reconciliation", () => {
 
     await first.shutdown()
     expect(await intake).toBe("Interrupted")
+    const abandonedClaim = state.claims.get(stranded.id)
+    if (abandonedClaim === undefined) {
+      throw new Error("expected the first worker lease")
+    }
+    state.nowMillis = abandonedClaim.leaseExpiresAtMillis + 1
 
     const restarted = await startRelayApplication({
       configProvider: configuration(),
@@ -240,8 +308,8 @@ describe("C08-02 durable reconciliation", () => {
     const repository = DeliveryRepository.of({
       save: () => Effect.void,
       findById: () => Effect.succeed(Option.none()),
-      resetClaims: () => Effect.void,
       claimPending: () => Effect.succeed([]),
+      renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,
       releaseClaim: () => Effect.void,
     })
@@ -285,6 +353,7 @@ describe("C08-02 durable reconciliation", () => {
       ),
       Layer.succeed(DeliveryRepository, repository),
       Layer.succeed(DeliverySupervisor, supervisor),
+      makeWorkerIdentityLayer(WorkerId.make("wrk-reconciler-test")),
     )
     const reconciler = makeReconcilerLive({
       afterClaim: () =>

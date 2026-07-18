@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient"
 import type * as SqlConnection from "effect/unstable/sql/SqlConnection"
 import * as SqlError from "effect/unstable/sql/SqlError"
 import { makeRelayIntakeStoreSql } from "../src/intakeStoreSql.ts"
-import { DeliveryId } from "../src/model.ts"
+import { DeliveryId, WorkerId } from "../src/model.ts"
 import { destination, event } from "./fixtures.ts"
 
 interface DatabaseState {
@@ -70,7 +70,11 @@ const makeDatabase = (failDeliveryInsert: boolean) =>
             )
           }
           target.deliveries.add(String(params[0]))
-          return Effect.succeed([])
+          return Effect.succeed([{
+            claim_owner: String(params[5]),
+            claim_generation: 1,
+            lease_expires_at_ms: 30_000,
+          }])
         }
 
         return Effect.succeed([])
@@ -104,12 +108,16 @@ describe("C07-05 intake transaction", () => {
     const database = await Effect.runPromise(makeDatabase(false))
     const store = makeRelayIntakeStoreSql(database.sql)
     const deliveryId = DeliveryId.make("dlv-transaction-commit")
+    const claim = {
+      ownerId: WorkerId.make("wrk-transaction"),
+      leaseDurationMillis: 30_000,
+    }
 
     const saved = await Effect.runPromise(
-      store.savePending(event, deliveryId, destination.id),
+      store.savePending(event, deliveryId, destination.id, claim),
     )
 
-    expect(saved.id).toBe(deliveryId)
+    expect(saved.delivery.id).toBe(deliveryId)
     expect(database.state()).toEqual({
       events: new Set([String(event.id)]),
       deliveries: new Set([String(deliveryId)]),
@@ -121,9 +129,15 @@ describe("C07-05 intake transaction", () => {
     const database = await Effect.runPromise(makeDatabase(true))
     const store = makeRelayIntakeStoreSql(database.sql)
     const deliveryId = DeliveryId.make("dlv-transaction-rollback")
+    const claim = {
+      ownerId: WorkerId.make("wrk-transaction"),
+      leaseDurationMillis: 30_000,
+    }
 
     const error = await Effect.runPromise(
-      Effect.flip(store.savePending(event, deliveryId, destination.id)),
+      Effect.flip(
+        store.savePending(event, deliveryId, destination.id, claim),
+      ),
     )
 
     expect(error._tag).toBe("RelayIntakeStoreError")

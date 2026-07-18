@@ -25,8 +25,10 @@ import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import {
   Destination,
   DestinationId,
+  WorkerId,
   type Destination as DestinationType,
 } from "../src/model.ts"
+import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 import { event, makeGate } from "./fixtures.ts"
 
 const makeDestination = (id: string): DestinationType =>
@@ -99,6 +101,7 @@ describe("C07-09 delivery metrics", () => {
             ),
             NodeCrypto.layer,
             RelayIntakeStoreMemory,
+            makeWorkerIdentityLayer(WorkerId.make("wrk-metrics")),
           ),
         ),
         Layer.provideMerge(

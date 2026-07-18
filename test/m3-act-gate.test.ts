@@ -24,8 +24,10 @@ import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import {
   Destination,
   DestinationId,
+  WorkerId,
   type Destination as DestinationType,
 } from "../src/model.ts"
+import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 import { event, makeGate } from "./fixtures.ts"
 import { reproduceUnboundedDeliveryPressure } from "./incidents/unboundedDeliveryPressure.ts"
 
@@ -63,6 +65,7 @@ const makeSupervisorRuntime = (
     ),
     NodeCrypto.layer,
     RelayIntakeStoreMemory,
+    makeWorkerIdentityLayer(WorkerId.make("wrk-m3-gate")),
   )
 
   return ManagedRuntime.make(

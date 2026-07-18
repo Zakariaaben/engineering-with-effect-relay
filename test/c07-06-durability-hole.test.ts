@@ -1,6 +1,6 @@
 import { NodeCrypto } from "@effect/platform-node"
 import { describe, expect, it } from "bun:test"
-import { Effect, Layer, ManagedRuntime } from "effect"
+import { Effect, Layer, ManagedRuntime, Option } from "effect"
 import {
   AppConfiguration,
   defaultDeliveryFlow,
@@ -18,12 +18,16 @@ import { DestinationClient } from "../src/destinationClient.ts"
 import { DeliveryRepositoryMemory } from "../src/layers.ts"
 import {
   Delivery,
+  ClaimGeneration,
+  DeliveryClaim,
   type DeliveryId,
   DeliveryState,
   type EventId,
   type RelayEvent,
+  WorkerId,
 } from "../src/model.ts"
 import { RelayIntakeStore } from "../src/services.ts"
+import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 import { destination, event, makeGate } from "./fixtures.ts"
 
 const makeDurableIntakeStore = (
@@ -34,7 +38,12 @@ const makeDurableIntakeStore = (
     RelayIntakeStore,
     RelayIntakeStore.of({
       accept: () => Effect.die(new Error("not used by this gate")),
-      savePending: (acceptedEvent, deliveryId, destinationId) =>
+      savePending: (
+        acceptedEvent,
+        deliveryId,
+        destinationId,
+        claimRequest,
+      ) =>
         Effect.sync(() => {
           const delivery = Delivery.make({
             id: deliveryId,
@@ -44,7 +53,16 @@ const makeDurableIntakeStore = (
           })
           events.set(acceptedEvent.id, acceptedEvent)
           deliveries.set(delivery.id, delivery)
-          return delivery
+          return {
+            claim: DeliveryClaim.make({
+              ownerId: claimRequest.ownerId,
+              generation: ClaimGeneration.make(1),
+              leaseExpiresAtMillis: Number.MAX_SAFE_INTEGER,
+            }),
+            delivery,
+            event: acceptedEvent,
+            route: Option.none(),
+          }
         }),
     }),
   )
@@ -77,6 +95,7 @@ const makeRuntime = (
           ),
           intakeStore,
           DeliveryRepositoryMemory,
+          makeWorkerIdentityLayer(WorkerId.make("wrk-c07-06")),
           NodeCrypto.layer,
         ),
       ),

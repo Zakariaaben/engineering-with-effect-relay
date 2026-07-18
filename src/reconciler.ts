@@ -1,5 +1,6 @@
 import {
   Context,
+  Duration,
   Effect,
   Layer,
   Schedule,
@@ -10,6 +11,7 @@ import { DeliverySupervisor } from "./deliverySupervisor.ts"
 import type { DeliveryRepositoryError } from "./errors.ts"
 import type { ClaimedDelivery } from "./services.ts"
 import { DeliveryRepository } from "./services.ts"
+import { WorkerIdentity } from "./workerIdentity.ts"
 
 export interface ReconciliationReport {
   readonly claimed: number
@@ -36,17 +38,20 @@ export const makeReconcilerLive = (
     const configuration = yield* AppConfiguration
     const repository = yield* DeliveryRepository
     const supervisor = yield* DeliverySupervisor
+    const worker = yield* WorkerIdentity
     const mutex = yield* Semaphore.make(1)
-
-    yield* repository.resetClaims()
 
     const reconcileOnce = Effect.fn("Reconciler.reconcileOnce")(
       () =>
         mutex.withPermit(
           Effect.gen(function* () {
             const claimed = yield* repository.claimPending(
+              worker.id,
               configuration.destination.id,
               configuration.recovery.claimBatchSize,
+              Duration.toMillis(
+                configuration.recovery.claimLeaseDuration,
+              ),
             )
             if (hooks.afterClaim !== undefined) {
               yield* hooks.afterClaim(claimed)

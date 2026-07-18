@@ -1,9 +1,11 @@
 import { Schema } from "effect"
 import {
+  ClaimGeneration,
   DeliveryId,
   DestinationId,
   EventId,
   IngestionKey,
+  WorkerId,
 } from "./model.ts"
 
 export class InvalidEventError extends Schema.TaggedErrorClass<InvalidEventError>()(
@@ -58,14 +60,24 @@ export class DeliveryOverloaded extends Schema.TaggedErrorClass<DeliveryOverload
   },
 ) {}
 
+export class ClaimLostError extends Schema.TaggedErrorClass<ClaimLostError>()(
+  "ClaimLostError",
+  {
+    deliveryId: DeliveryId,
+    ownerId: WorkerId,
+    generation: ClaimGeneration,
+    operation: Schema.Literals(["renew", "complete", "release"]),
+  },
+) {}
+
 export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRepositoryError>()(
   "DeliveryRepositoryError",
   {
     operation: Schema.Literals([
       "save",
       "findById",
-      "resetClaims",
       "claimPending",
+      "renewClaim",
       "completeClaim",
       "releaseClaim",
     ]),

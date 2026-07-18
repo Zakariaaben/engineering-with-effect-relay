@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import {
   IngestionConflictError,
@@ -7,8 +7,10 @@ import {
 import { deliveryToRow } from "./deliveryRepositorySql.ts"
 import {
   AmountCents,
+  ClaimGeneration,
   ConfigurationVersion,
   Delivery,
+  DeliveryClaim,
   DeliveryId,
   DeliveryRouteSnapshot,
   DeliveryState,
@@ -17,6 +19,7 @@ import {
   InvoiceId,
   RelayEvent,
   RequestFingerprint,
+  WorkerId,
 } from "./model.ts"
 import {
   IntakeDecision,
@@ -43,6 +46,23 @@ const ExistingIntakeRow = Schema.Struct({
 })
 
 const decodeExistingIntake = Schema.decodeUnknownEffect(ExistingIntakeRow)
+
+const ClaimRow = Schema.Struct({
+  claim_owner: WorkerId,
+  claim_generation: ClaimGeneration,
+  lease_expires_at_ms: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(0),
+  ),
+})
+
+const decodeClaim = (candidate: unknown) =>
+  Schema.decodeUnknownEffect(ClaimRow)(candidate).pipe(
+    Effect.map((row) => DeliveryClaim.make({
+      ownerId: row.claim_owner,
+      generation: row.claim_generation,
+      leaseExpiresAtMillis: row.lease_expires_at_ms,
+    })),
+  )
 
 export const makeRelayIntakeStoreSql = (
   sql: SqlClient.SqlClient,
@@ -82,29 +102,50 @@ export const makeRelayIntakeStoreSql = (
           `
 
           if (inserted.length > 0) {
-            yield* sql`
+            const claimRows = yield* sql<Record<string, unknown>>`
               INSERT INTO deliveries (
                 delivery_id,
                 event_id,
                 destination_id,
                 state,
                 status,
-                claimed,
                 destination_url,
-                configuration_version
+                configuration_version,
+                claim_owner,
+                claim_generation,
+                lease_expires_at_ms
               ) VALUES (
                 ${row.delivery_id},
                 ${row.event_id},
                 ${row.destination_id},
                 ${row.state},
                 ${row.status},
-                TRUE,
                 ${record.route.endpoint.toString()},
-                ${record.route.configurationVersion}
+                ${record.route.configurationVersion},
+                ${record.claim.ownerId},
+                1,
+                floor(
+                  extract(epoch FROM clock_timestamp()) * 1000
+                )::bigint + ${record.claim.leaseDurationMillis}
               )
+              RETURNING
+                claim_owner,
+                claim_generation,
+                lease_expires_at_ms
             `
+            const claimCandidate = claimRows[0]
+            if (claimCandidate === undefined) {
+              return yield* Effect.fail(
+                intakeStoreError(
+                  "accept",
+                  new Error("accepted delivery has no initial lease"),
+                ),
+              )
+            }
+            const claim = yield* decodeClaim(claimCandidate)
 
             return IntakeDecision.Accepted({
+              claim,
               event: record.event,
               delivery,
               route: record.route,
@@ -188,6 +229,7 @@ export const makeRelayIntakeStoreSql = (
       event: RelayEvent,
       deliveryId: DeliveryId,
       destinationId: DestinationId,
+      claimRequest: IntakeRecord["claim"],
     ) => {
       const delivery = Delivery.make({
         id: deliveryId,
@@ -213,25 +255,50 @@ export const makeRelayIntakeStoreSql = (
             )
           `
 
-          yield* sql`
+          const claimRows = yield* sql<Record<string, unknown>>`
             INSERT INTO deliveries (
               delivery_id,
               event_id,
               destination_id,
               state,
               status,
-              claimed
+              claim_owner,
+              claim_generation,
+              lease_expires_at_ms
             ) VALUES (
               ${row.delivery_id},
               ${row.event_id},
               ${row.destination_id},
               ${row.state},
               ${row.status},
-              TRUE
+              ${claimRequest.ownerId},
+              1,
+              floor(
+                extract(epoch FROM clock_timestamp()) * 1000
+              )::bigint + ${claimRequest.leaseDurationMillis}
             )
+            RETURNING
+              claim_owner,
+              claim_generation,
+              lease_expires_at_ms
           `
+          const claimCandidate = claimRows[0]
+          if (claimCandidate === undefined) {
+            return yield* Effect.fail(
+              intakeStoreError(
+                "savePending",
+                new Error("saved delivery has no initial lease"),
+              ),
+            )
+          }
+          const claim = yield* decodeClaim(claimCandidate)
 
-          return delivery
+          return {
+            claim,
+            delivery,
+            event,
+            route: Option.none(),
+          }
         }),
       ).pipe(
         Effect.mapError((cause) => intakeStoreError("savePending", cause)),

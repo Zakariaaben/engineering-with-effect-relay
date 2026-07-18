@@ -31,6 +31,10 @@ import type {
   IngestionKey,
 } from "./model.ts"
 import { RelayReadiness, RelayReadinessLive } from "./readiness.ts"
+import {
+  WorkerIdentity,
+  WorkerIdentityLive,
+} from "./workerIdentity.ts"
 
 export type RegisterShutdownHook = (
   shutdown: () => Promise<void>,
@@ -103,6 +107,10 @@ export const startRelayApplication = async (options: {
   readonly httpServerLayer?: RelayHttpServerLayer
   readonly persistenceLayer?: RelayPersistenceLayer
   readonly readinessLayer?: Layer.Layer<RelayReadiness>
+  readonly workerIdentityLayer?: Layer.Layer<
+    WorkerIdentity,
+    unknown
+  >
   readonly tracer?: Tracer.Tracer
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
@@ -116,6 +124,7 @@ export const startRelayApplication = async (options: {
     options.configProvider,
     options.persistenceLayer ?? RelayPersistenceLive,
     options.readinessLayer ?? RelayReadinessLive,
+    options.workerIdentityLayer ?? WorkerIdentityLive,
   )
   const runtimeLayer = options.tracer === undefined
     ? applicationLayer

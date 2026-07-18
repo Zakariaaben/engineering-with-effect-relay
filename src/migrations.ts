@@ -96,10 +96,53 @@ export const addAtomicIntake = Effect.gen(function* () {
   `
 })
 
+export const addLeasedClaims = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  yield* sql`DROP INDEX deliveries_recovery_idx`
+
+  yield* sql`
+    ALTER TABLE deliveries
+    ADD COLUMN claim_owner text,
+    ADD COLUMN claim_generation bigint NOT NULL DEFAULT 0,
+    ADD COLUMN lease_expires_at_ms bigint,
+    ADD CONSTRAINT deliveries_claim_generation_check CHECK (
+      claim_generation >= 0
+    ),
+    ADD CONSTRAINT deliveries_claim_lease_complete_check CHECK (
+      (
+        claim_owner IS NULL
+        AND lease_expires_at_ms IS NULL
+      )
+      OR
+      (
+        claim_owner IS NOT NULL
+        AND claim_owner ~ '^wrk-[a-z0-9]+(-[a-z0-9]+)*$'
+        AND claim_generation > 0
+        AND lease_expires_at_ms IS NOT NULL
+        AND lease_expires_at_ms >= 0
+      )
+      AND (claim_owner IS NULL OR state = 'Pending')
+    )
+  `
+
+  yield* sql`
+    ALTER TABLE deliveries
+    DROP COLUMN claimed
+  `
+
+  yield* sql`
+    CREATE INDEX deliveries_recovery_idx
+    ON deliveries (destination_id, delivery_id)
+    WHERE state = 'Pending'
+  `
+})
+
 export const RelayMigrations = Migrator.fromRecord({
   "0001_create_relay_tables": createRelayTables,
   "0002_add_delivery_claims": addDeliveryClaims,
   "0003_atomic_intake": addAtomicIntake,
+  "0004_leased_claims": addLeasedClaims,
 })
 
 export const RelayMigrationsLive = Layer.effectDiscard(

@@ -1,6 +1,12 @@
 import { NodeCrypto } from "@effect/platform-node"
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
-import { ConfigProvider, Effect, Layer, Option } from "effect"
+import {
+  Clock,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Option,
+} from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import {
@@ -13,13 +19,18 @@ import {
 } from "./deliveryRepositorySql.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
 import { EventIntakeLive } from "./eventIntake.ts"
-import { IngestionConflictError } from "./errors.ts"
+import {
+  ClaimLostError,
+  IngestionConflictError,
+} from "./errors.ts"
 import {
   DeliveryHttpRoutes,
   IntakeAuthorizationLive,
 } from "./httpServer.ts"
 import {
   Delivery,
+  ClaimGeneration,
+  DeliveryClaim,
   DeliveryRouteSnapshot,
   DeliveryResult,
   DeliveryState,
@@ -28,6 +39,7 @@ import {
   type IngestionKey,
   type RelayEvent,
   type RequestFingerprint,
+  type WorkerId,
 } from "./model.ts"
 import { ReconcilerLive } from "./reconciler.ts"
 import { RelayIntakeStoreSql } from "./intakeStoreSql.ts"
@@ -44,6 +56,10 @@ import {
   RelayReadiness,
   RelayReadinessLive,
 } from "./readiness.ts"
+import {
+  WorkerIdentity,
+  WorkerIdentityLive,
+} from "./workerIdentity.ts"
 
 const stateFromResult = (
   result: DeliveryResult,
@@ -60,40 +76,77 @@ const stateFromResult = (
 const makeMemoryRepository = (
   events: Map<EventId, RelayEvent>,
   records: Map<DeliveryId, Delivery>,
-  claims: Set<DeliveryId>,
+  claims: Map<DeliveryId, DeliveryClaim>,
+  generations: Map<DeliveryId, number>,
   routes: Map<DeliveryId, DeliveryRouteSnapshot> = new Map(),
 ) => {
+  const lost = (
+    operation: "renew" | "complete" | "release",
+    deliveryId: DeliveryId,
+    claim: DeliveryClaim,
+  ) => new ClaimLostError({
+    operation,
+    deliveryId,
+    ownerId: claim.ownerId,
+    generation: claim.generation,
+  })
+  const owns = (
+    deliveryId: DeliveryId,
+    expected: DeliveryClaim,
+    nowMillis?: number,
+  ) => {
+    const current = claims.get(deliveryId)
+    return current !== undefined &&
+      current.ownerId === expected.ownerId &&
+      current.generation === expected.generation &&
+      (nowMillis === undefined || current.leaseExpiresAtMillis > nowMillis)
+  }
   const save = Effect.fn("DeliveryRepository.save")(
     (delivery: Delivery) =>
       Effect.sync(() => {
-        records.set(delivery.id, delivery)
-        claims.delete(delivery.id)
+        if (!records.has(delivery.id)) {
+          records.set(delivery.id, delivery)
+          generations.set(delivery.id, 0)
+        }
       }),
   )
   const findById = Effect.fn("DeliveryRepository.findById")(
     (id: DeliveryId) =>
       Effect.sync(() => Option.fromNullishOr(records.get(id))),
   )
-  const resetClaims = Effect.fn("DeliveryRepository.resetClaims")(
-    () => Effect.sync(() => claims.clear()),
-  )
   const claimPending = Effect.fn("DeliveryRepository.claimPending")(
-    (destinationId: Delivery["destinationId"], limit: number) =>
-      Effect.sync(() => {
+    (
+      ownerId: WorkerId,
+      destinationId: Delivery["destinationId"],
+      limit: number,
+      leaseDurationMillis: number,
+    ) =>
+      Effect.gen(function* () {
+        const nowMillis = yield* Clock.currentTimeMillis
         const claimed = []
         for (const delivery of records.values()) {
+          const existingClaim = claims.get(delivery.id)
           if (
             claimed.length >= limit ||
             delivery.state._tag !== "Pending" ||
             delivery.destinationId !== destinationId ||
-            claims.has(delivery.id)
+            (existingClaim !== undefined &&
+              existingClaim.leaseExpiresAtMillis > nowMillis)
           ) {
             continue
           }
           const event = events.get(delivery.eventId)
           if (event === undefined) continue
-          claims.add(delivery.id)
+          const generation = (generations.get(delivery.id) ?? 0) + 1
+          const claim = DeliveryClaim.make({
+            ownerId,
+            generation: ClaimGeneration.make(generation),
+            leaseExpiresAtMillis: nowMillis + leaseDurationMillis,
+          })
+          generations.set(delivery.id, generation)
+          claims.set(delivery.id, claim)
           claimed.push({
+            claim,
             delivery,
             event,
             route: Option.fromNullishOr(routes.get(delivery.id)),
@@ -102,25 +155,62 @@ const makeMemoryRepository = (
         return claimed
       }),
   )
-  const completeClaim = Effect.fn("DeliveryRepository.completeClaim")(
-    (deliveryId: DeliveryId, result: DeliveryResult) =>
-      Effect.sync(() => {
-        const current = records.get(deliveryId)
-        if (current !== undefined && claims.has(deliveryId)) {
-          records.set(
-            deliveryId,
-            Delivery.make({
-              ...current,
-              state: stateFromResult(result),
-            }),
-          )
+  const renewClaim = Effect.fn("DeliveryRepository.renewClaim")(
+    (
+      deliveryId: DeliveryId,
+      claim: DeliveryClaim,
+      leaseDurationMillis: number,
+    ) =>
+      Effect.gen(function* () {
+        const nowMillis = yield* Clock.currentTimeMillis
+        if (!owns(deliveryId, claim, nowMillis)) {
+          return yield* Effect.fail(lost("renew", deliveryId, claim))
         }
+        const renewed = DeliveryClaim.make({
+          ...claim,
+          leaseExpiresAtMillis: nowMillis + leaseDurationMillis,
+        })
+        claims.set(deliveryId, renewed)
+        return renewed
+      }),
+  )
+  const completeClaim = Effect.fn("DeliveryRepository.completeClaim")(
+    (
+      deliveryId: DeliveryId,
+      claim: DeliveryClaim,
+      result: DeliveryResult,
+    ) =>
+      Effect.gen(function* () {
+        const nowMillis = yield* Clock.currentTimeMillis
+        const current = records.get(deliveryId)
+        if (
+          current === undefined ||
+          current.state._tag !== "Pending" ||
+          !owns(deliveryId, claim, nowMillis)
+        ) {
+          return yield* Effect.fail(lost("complete", deliveryId, claim))
+        }
+        records.set(
+          deliveryId,
+          Delivery.make({
+            ...current,
+            state: stateFromResult(result),
+          }),
+        )
         claims.delete(deliveryId)
       }),
   )
   const releaseClaim = Effect.fn("DeliveryRepository.releaseClaim")(
-    (deliveryId: DeliveryId) =>
-      Effect.sync(() => {
+    (deliveryId: DeliveryId, claim: DeliveryClaim) =>
+      Effect.gen(function* () {
+        const current = records.get(deliveryId)
+        if (
+          current === undefined ||
+          current.state._tag !== "Pending" ||
+          !owns(deliveryId, claim)
+        ) {
+          return yield* Effect.fail(lost("release", deliveryId, claim))
+        }
         claims.delete(deliveryId)
       }),
   )
@@ -128,8 +218,8 @@ const makeMemoryRepository = (
   return DeliveryRepository.of({
     save,
     findById,
-    resetClaims,
     claimPending,
+    renewClaim,
     completeClaim,
     releaseClaim,
   })
@@ -137,13 +227,14 @@ const makeMemoryRepository = (
 
 export const DeliveryRepositoryMemory = Layer.sync(
   DeliveryRepository,
-  () => makeMemoryRepository(new Map(), new Map(), new Set()),
+  () => makeMemoryRepository(new Map(), new Map(), new Map(), new Map()),
 )
 
 const makeRelayPersistenceMemory = () => Layer.suspend(() => {
   const events = new Map<EventId, RelayEvent>()
   const deliveries = new Map<DeliveryId, Delivery>()
-  const claims = new Set<DeliveryId>()
+  const claims = new Map<DeliveryId, DeliveryClaim>()
+  const generations = new Map<DeliveryId, number>()
   const routes = new Map<DeliveryId, DeliveryRouteSnapshot>()
   const intakes = new Map<
     IngestionKey,
@@ -156,26 +247,25 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
     events,
     deliveries,
     claims,
+    generations,
     routes,
   )
 
   const accept = Effect.fn("RelayIntakeStore.accept")(
     (record: IntakeRecord) =>
-      Effect.suspend((): Effect.Effect<
-        IntakeDecision,
-        IngestionConflictError
-      > => {
+      Effect.gen(function* () {
         const existing = intakes.get(record.ingestionKey)
         if (existing !== undefined) {
           if (existing.requestFingerprint !== record.requestFingerprint) {
-            return Effect.fail(new IngestionConflictError({
+            return yield* Effect.fail(new IngestionConflictError({
               ingestionKey: record.ingestionKey,
               existingEventId: existing.decision.event.id,
             }))
           }
-          return Effect.succeed(IntakeDecision.Replay(existing.decision))
+          return IntakeDecision.Replay(existing.decision)
         }
 
+        const nowMillis = yield* Clock.currentTimeMillis
         const delivery = Delivery.make({
           id: record.deliveryId,
           eventId: record.event.id,
@@ -188,15 +278,22 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
           route: record.route,
           acceptedAtMillis: record.acceptedAtMillis,
         }
+        const claim = DeliveryClaim.make({
+          ownerId: record.claim.ownerId,
+          generation: ClaimGeneration.make(1),
+          leaseExpiresAtMillis:
+            nowMillis + record.claim.leaseDurationMillis,
+        })
         events.set(record.event.id, record.event)
         deliveries.set(delivery.id, delivery)
         routes.set(delivery.id, record.route)
-        claims.add(delivery.id)
+        generations.set(delivery.id, 1)
+        claims.set(delivery.id, claim)
         intakes.set(record.ingestionKey, {
           requestFingerprint: record.requestFingerprint,
           decision,
         })
-        return Effect.succeed(IntakeDecision.Accepted(decision))
+        return IntakeDecision.Accepted({ ...decision, claim })
       }),
   )
 
@@ -205,8 +302,10 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
       event: RelayEvent,
       id: DeliveryId,
       destinationId: Delivery["destinationId"],
+      claimRequest,
     ) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const nowMillis = yield* Clock.currentTimeMillis
         const delivery = Delivery.make({
           id,
           eventId: event.id,
@@ -215,8 +314,20 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
         })
         events.set(event.id, event)
         deliveries.set(delivery.id, delivery)
-        claims.add(delivery.id)
-        return delivery
+        const claim = DeliveryClaim.make({
+          ownerId: claimRequest.ownerId,
+          generation: ClaimGeneration.make(1),
+          leaseExpiresAtMillis:
+            nowMillis + claimRequest.leaseDurationMillis,
+        })
+        generations.set(delivery.id, 1)
+        claims.set(delivery.id, claim)
+        return {
+          claim,
+          delivery,
+          event,
+          route: Option.none(),
+        }
       }),
   )
 
@@ -261,6 +372,10 @@ export const makeRelayApplicationLayer = (
   httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
   configProvider: ConfigProvider.ConfigProvider,
   persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
+  workerIdentityLayer: Layer.Layer<
+    WorkerIdentity,
+    unknown
+  > = WorkerIdentityLive,
 ) => {
   const dependencies = Layer.mergeAll(
     makeRelayAdapterLayer(httpClientLayer, persistenceLayer),
@@ -269,10 +384,14 @@ export const makeRelayApplicationLayer = (
   ).pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
   )
+  const distributedDependencies = Layer.merge(
+    dependencies,
+    workerIdentityLayer,
+  )
 
   const supervisor = DeliverySupervisorLive.pipe(
     Layer.provideMerge(DeliveryEventsLive),
-    Layer.provideMerge(dependencies),
+    Layer.provideMerge(distributedDependencies),
   )
 
   return Layer.merge(ReconcilerLive, EventIntakeLive).pipe(
@@ -290,11 +409,16 @@ export const makeRelayHttpApplicationLayer = (
   configProvider: ConfigProvider.ConfigProvider,
   persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
   readinessLayer: Layer.Layer<RelayReadiness> = RelayReadinessLive,
+  workerIdentityLayer: Layer.Layer<
+    WorkerIdentity,
+    unknown
+  > = WorkerIdentityLive,
 ) => {
   const application = makeRelayApplicationLayer(
     httpClientLayer,
     configProvider,
     persistenceLayer,
+    workerIdentityLayer,
   )
   const intakeAuthorization = IntakeAuthorizationLive.pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
