@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { Config, ConfigProvider, Effect } from "effect"
+import { RelayPersistenceMemory } from "../src/layers.ts"
 import {
   type RegisterShutdownHook,
   startRelayApplication,
@@ -67,6 +68,7 @@ describe("C03-08 runtime boundary", () => {
       httpClientLayer,
       httpServerLayer: makeTestHttpServerLayer(),
       configProvider: validConfig(),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: shutdown.register,
     })
 
@@ -93,6 +95,7 @@ describe("C03-08 runtime boundary", () => {
       configProvider: ConfigProvider.fromUnknown({
         RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
       }),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: shutdown.register,
     })).rejects.toBeInstanceOf(Config.ConfigError)
 
@@ -112,6 +115,7 @@ describe("C03-08 runtime boundary", () => {
       httpClientLayer,
       httpServerLayer: makeTestHttpServerLayer(),
       configProvider: validConfig(),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: shutdown.register,
     })
 

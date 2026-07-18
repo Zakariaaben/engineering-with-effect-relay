@@ -14,6 +14,7 @@ import {
   DeliveryHttpRoutes,
   IntakeAuthorization,
 } from "../src/httpServer.ts"
+import { RelayPersistenceMemory } from "../src/layers.ts"
 import { DestinationId } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
@@ -119,6 +120,7 @@ describe("C07-02 HTTP server boundary", () => {
         }),
       ),
       httpServerLayer: makeTestHttpServerLayer(),
+      persistenceLayer: RelayPersistenceMemory,
       registerShutdownHook: () => () => {},
     })
 

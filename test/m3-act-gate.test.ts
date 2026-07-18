@@ -18,6 +18,7 @@ import {
 } from "../src/deliverySupervisor.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
+import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import {
   Destination,
   DestinationId,
@@ -56,6 +57,7 @@ const makeSupervisorRuntime = (
       DestinationClient.of({ post }),
     ),
     NodeCrypto.layer,
+    RelayIntakeStoreMemory,
   )
 
   return ManagedRuntime.make(

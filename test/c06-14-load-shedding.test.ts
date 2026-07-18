@@ -19,6 +19,7 @@ import {
 } from "../src/deliverySupervisor.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
 import { DeliveryOverloaded } from "../src/errors.ts"
+import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import {
   Destination,
   DestinationId,
@@ -75,6 +76,7 @@ describe("C06-14 overload admission", () => {
               }),
             ),
             NodeCrypto.layer,
+            RelayIntakeStoreMemory,
           ),
         ),
       ),

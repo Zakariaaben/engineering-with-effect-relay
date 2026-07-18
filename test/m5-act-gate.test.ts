@@ -19,6 +19,7 @@ import {
   type DeliveryLoadMetrics,
 } from "../src/deliverySupervisor.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
+import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import { destination, event, makeGate } from "./fixtures.ts"
 import { reproduceUnboundedProducerConsumer } from "./incidents/unboundedProducerConsumer.ts"
 
@@ -100,6 +101,7 @@ describe("C06-15 M5 act gate", () => {
               }),
             ),
             NodeCrypto.layer,
+            RelayIntakeStoreMemory,
           ),
         ),
       ),

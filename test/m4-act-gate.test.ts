@@ -26,6 +26,7 @@ import {
   DestinationClient,
   type DestinationClientService,
 } from "../src/destinationClient.ts"
+import { RelayIntakeStoreMemory } from "../src/layers.ts"
 import {
   DeliveryId,
   DeliveryOutcome,
@@ -76,6 +77,7 @@ const makeM4Layer = (
       DestinationClient.of({ post }),
     ),
     Layer.succeed(Crypto.Crypto, makeTestCrypto()),
+    RelayIntakeStoreMemory,
   )
   const supervisor = DeliverySupervisorLive.pipe(
     Layer.provide(DeliveryEventsLive),

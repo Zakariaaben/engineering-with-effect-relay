@@ -7,16 +7,28 @@ import {
   DestinationClientLive,
 } from "./destinationClient.ts"
 import { DeliveryEventsLive } from "./deliveryEvents.ts"
+import {
+  DeliveryRepositorySql,
+  PostgresLive,
+} from "./deliveryRepositorySql.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
 import {
   DeliveryHttpRoutes,
   IntakeAuthorizationLive,
 } from "./httpServer.ts"
-import type {
+import {
   Delivery,
-  DeliveryId,
+  DeliveryState,
+  type DeliveryId,
+  type EventId,
+  type RelayEvent,
 } from "./model.ts"
-import { DeliveryRepository } from "./services.ts"
+import { RelayIntakeStoreSql } from "./intakeStoreSql.ts"
+import { RelayMigrationsLive } from "./migrations.ts"
+import {
+  DeliveryRepository,
+  RelayIntakeStore,
+} from "./services.ts"
 import { AppConfigurationLive } from "./configuration.ts"
 
 export const DeliveryRepositoryMemory = Layer.sync(
@@ -39,22 +51,71 @@ export const DeliveryRepositoryMemory = Layer.sync(
   },
 )
 
+export const RelayIntakeStoreMemory = Layer.sync(
+  RelayIntakeStore,
+  () => {
+    const events = new Map<EventId, RelayEvent>()
+    const deliveries = new Map<DeliveryId, Delivery>()
+
+    const savePending = Effect.fn("RelayIntakeStoreMemory.savePending")(
+      (
+        event: RelayEvent,
+        id: DeliveryId,
+        destinationId: Delivery["destinationId"],
+      ) =>
+        Effect.sync(() => {
+          const delivery = Delivery.make({
+            id,
+            eventId: event.id,
+            destinationId,
+            state: DeliveryState.cases.Pending.make({}),
+          })
+          events.set(event.id, event)
+          deliveries.set(delivery.id, delivery)
+          return delivery
+        }),
+    )
+
+    return RelayIntakeStore.of({ savePending })
+  },
+)
+
+export const RelayPersistenceMemory = Layer.merge(
+  DeliveryRepositoryMemory,
+  RelayIntakeStoreMemory,
+)
+
+export const RelayPersistenceLive = Layer.mergeAll(
+  DeliveryRepositorySql,
+  RelayIntakeStoreSql,
+  RelayMigrationsLive,
+).pipe(
+  Layer.provide(PostgresLive),
+)
+
+export type RelayPersistenceLayer = Layer.Layer<
+  DeliveryRepository | RelayIntakeStore,
+  unknown
+>
+
 export const makeRelayAdapterLayer = (
   httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
+  persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
 ) =>
   Layer.mergeAll(
     DestinationClientLive.pipe(
       Layer.provide(httpClientLayer),
     ),
-    DeliveryRepositoryMemory,
+    persistenceLayer,
   )
 
 export const makeRelayApplicationLayer = (
   httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
   configProvider: ConfigProvider.ConfigProvider,
+  persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
 ) => {
   const dependencies = Layer.mergeAll(
-    makeRelayAdapterLayer(httpClientLayer),
+    makeRelayAdapterLayer(httpClientLayer, persistenceLayer),
     AppConfigurationLive,
     NodeCrypto.layer,
   ).pipe(
@@ -75,10 +136,12 @@ export const makeRelayHttpApplicationLayer = (
   httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
   httpServerLayer: RelayHttpServerLayer,
   configProvider: ConfigProvider.ConfigProvider,
+  persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
 ) => {
   const application = makeRelayApplicationLayer(
     httpClientLayer,
     configProvider,
+    persistenceLayer,
   )
   const intakeAuthorization = IntakeAuthorizationLive.pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
