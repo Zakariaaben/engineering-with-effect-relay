@@ -57,7 +57,7 @@ export const RelayIntakeStoreMemory = Layer.sync(
     const events = new Map<EventId, RelayEvent>()
     const deliveries = new Map<DeliveryId, Delivery>()
 
-    const savePending = Effect.fn("RelayIntakeStoreMemory.savePending")(
+    const savePending = Effect.fn("RelayIntakeStore.savePending")(
       (
         event: RelayEvent,
         id: DeliveryId,

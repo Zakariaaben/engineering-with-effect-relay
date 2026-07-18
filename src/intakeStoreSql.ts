@@ -17,7 +17,7 @@ const intakeStoreError = (cause: unknown) =>
 export const makeRelayIntakeStoreSql = (
   sql: SqlClient.SqlClient,
 ) => {
-  const savePending = Effect.fn("RelayIntakeStoreSql.savePending")(
+  const savePending = Effect.fn("RelayIntakeStore.savePending")(
     (
       event: RelayEvent,
       deliveryId: DeliveryId,

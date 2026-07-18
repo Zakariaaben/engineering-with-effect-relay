@@ -14,6 +14,7 @@ import {
   Semaphore,
   Stream,
   SynchronizedRef,
+  Tracer,
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
 import {
@@ -56,6 +57,7 @@ interface DeliveryJob {
   readonly deliveryId: DeliveryId
   readonly destination: Destination
   readonly event: RelayEvent
+  readonly parentSpan: Option.Option<Tracer.AnySpan>
   readonly random: Context.Service.Shape<typeof Random.Random>
   readonly result: Deferred.Deferred<DeliveryResult>
 }
@@ -244,6 +246,11 @@ export const makeDeliverySupervisorLive = (
 
     const processJob = Effect.fn("DeliverySupervisor.processJob")(
       function* (job: DeliveryJob) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.event_id": job.event.id,
+          "relay.delivery_id": job.deliveryId,
+          "relay.destination_id": job.destination.id,
+        })
         const wasCancelled = yield* Deferred.isDone(job.cancelled)
         const exit = yield* (
           wasCancelled
@@ -269,7 +276,17 @@ export const makeDeliverySupervisorLive = (
 
     const dispatchJob = Effect.fn("DeliverySupervisor.dispatchJob")(
       function* (job: DeliveryJob) {
-        yield* FiberSet.run(deliveries, processJob(job))
+        const task = Option.match(job.parentSpan, {
+          onNone: () => processJob(job),
+          onSome: (parentSpan) =>
+            processJob(job).pipe(
+              Effect.withParentSpan(parentSpan),
+            ),
+        })
+        yield* FiberSet.run(
+          deliveries,
+          task,
+        )
       },
     )
 
@@ -315,6 +332,11 @@ export const makeDeliverySupervisorLive = (
                   })
                 ),
               )
+              yield* Effect.annotateCurrentSpan({
+                "relay.event_id": event.id,
+                "relay.delivery_id": deliveryId,
+                "relay.destination_id": destination.id,
+              })
               const delivery = yield* intakeStore.savePending(
                 event,
                 deliveryId,
@@ -334,6 +356,9 @@ export const makeDeliverySupervisorLive = (
               const result = yield* Deferred.make<DeliveryResult>()
               const cancelled = yield* Deferred.make<void>()
               const clock = yield* Clock.Clock
+              const parentSpan = yield* Effect.option(
+                Effect.currentSpan,
+              )
               const random = yield* Random.Random
               const offered = yield* Queue.offer(requests, {
                 cancelled,
@@ -341,6 +366,7 @@ export const makeDeliverySupervisorLive = (
                 deliveryId,
                 destination,
                 event,
+                parentSpan,
                 random,
                 result,
               })
