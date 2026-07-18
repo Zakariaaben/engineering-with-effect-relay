@@ -1,7 +1,9 @@
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import { Effect, Layer, Redacted } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
+import * as Http from "node:http"
 import {
   DestinationClient,
   type DestinationClientService,
@@ -56,6 +58,12 @@ export const makeHttpResponse = (
       null,
       headers === undefined ? { status } : { status, headers },
     ),
+  )
+
+export const makeTestHttpServerLayer = () =>
+  NodeHttpServer.layer(
+    Http.createServer,
+    { host: "127.0.0.1", port: 0 },
   )
 
 export const makeGate = <A>() => {

@@ -6,6 +6,7 @@ import {
   makeGate,
   makeHttpClientLayer,
   makeHttpResponse,
+  makeTestHttpServerLayer,
 } from "./fixtures.ts"
 
 const validConfig = () => ConfigProvider.fromUnknown({
@@ -39,6 +40,7 @@ describe("C04-10 delivery supervisor", () => {
     )
     const application = await startRelayApplication({
       httpClientLayer,
+      httpServerLayer: makeTestHttpServerLayer(),
       configProvider: validConfig(),
       registerShutdownHook: () => () => {},
     })

@@ -1,4 +1,6 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as Http from "node:http"
 import {
   ConfigProvider,
   Effect,
@@ -7,13 +9,17 @@ import {
   Stream,
 } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
+import * as HttpServer from "effect/unstable/http/HttpServer"
 import { DeliveryEvents } from "./deliveryEvents.ts"
 import {
   DeliverySupervisor,
   type DeliveryConcurrencyMetrics,
   type DeliveryLoadMetrics,
 } from "./deliverySupervisor.ts"
-import { makeRelayApplicationLayer } from "./layers.ts"
+import {
+  makeRelayHttpApplicationLayer,
+  type RelayHttpServerLayer,
+} from "./layers.ts"
 import type { DeliveryResult } from "./model.ts"
 
 export type RegisterShutdownHook = (
@@ -26,6 +32,7 @@ export interface RelayApplication {
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
   readonly loadMetrics: () => Promise<DeliveryLoadMetrics>
+  readonly httpAddress: string
   readonly shutdown: () => Promise<void>
 }
 
@@ -64,14 +71,24 @@ const deliveryResults = Effect.fn(
   return events.results
 })
 
+const httpAddress = Effect.fn("Relay.httpAddress")(function* () {
+  const server = yield* HttpServer.HttpServer
+  return HttpServer.formatAddress(server.address)
+})
+
 export const startRelayApplication = async (options: {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>
+  readonly httpServerLayer?: RelayHttpServerLayer
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
 }): Promise<RelayApplication> => {
   const runtime = ManagedRuntime.make(
-    makeRelayApplicationLayer(
+    makeRelayHttpApplicationLayer(
       options.httpClientLayer ?? NodeHttpClient.layerNodeHttp,
+      options.httpServerLayer ?? NodeHttpServer.layer(
+        Http.createServer,
+        { host: "127.0.0.1", port: 3_000 },
+      ),
       options.configProvider,
     ),
   )
@@ -89,6 +106,7 @@ export const startRelayApplication = async (options: {
   try {
     await runtime.context()
     const results = await runtime.runPromise(deliveryResults())
+    const address = await runtime.runPromise(httpAddress())
     removeShutdownHook = options.registerShutdownHook(shutdown)
 
     return {
@@ -100,6 +118,7 @@ export const startRelayApplication = async (options: {
       deliver: (candidate) =>
         runtime.runPromise(deliverConfiguredCandidate(candidate)),
       loadMetrics: () => runtime.runPromise(loadMetrics()),
+      httpAddress: address,
       shutdown,
     }
   } catch (error) {
