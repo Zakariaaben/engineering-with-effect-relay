@@ -25,6 +25,7 @@ const configuration = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: "dst-m6",
   RELAY_DESTINATION_URL: "https://hooks.example.test/m6",
   RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+  RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
 })
 
 const makePersistenceLayer = (
@@ -45,6 +46,8 @@ const makePersistenceLayer = (
       recordAttempt: () => Effect.void,
       listDeadLetters: () => Effect.succeed([]),
       retryDeadLetter: () => Effect.void,
+      repairDeadLetter: () => Effect.void,
+      terminateDeadLetter: () => Effect.void,
       claimPending: () => Effect.succeed([]),
       renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,

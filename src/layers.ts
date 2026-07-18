@@ -22,6 +22,7 @@ import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
 import { EventIntakeLive } from "./eventIntake.ts"
 import {
   ClaimLostError,
+  DeadLetterDestinationMismatchError,
   DeadLetterRecoveryError,
   DeliveryRepositoryError,
   IngestionConflictError,
@@ -29,6 +30,7 @@ import {
 import {
   DeliveryHttpRoutes,
   IntakeAuthorizationLive,
+  OperationsAuthorizationLive,
 } from "./httpServer.ts"
 import {
   Delivery,
@@ -224,7 +226,13 @@ const makeMemoryRepository = (
     Effect.gen(function* () {
       const nowMillis = yield* Clock.currentTimeMillis
       const current = records.get(id)
-      if (current === undefined || current.state._tag !== "DeadLettered") {
+      if (current === undefined) {
+        return yield* Effect.fail(new DeadLetterRecoveryError({
+          deliveryId: id,
+          reason: "NotFound",
+        }))
+      }
+      if (current.state._tag !== "DeadLettered") {
         return yield* Effect.fail(new DeadLetterRecoveryError({
           deliveryId: id,
           reason: "NotDeadLettered",
@@ -236,6 +244,64 @@ const makeMemoryRepository = (
       }))
       claims.delete(id)
       nextEligibleAt.set(id, nowMillis)
+    }))
+  const repairDeadLetter = Effect.fn(
+    "DeliveryRepository.repairDeadLetter",
+  )((id: DeliveryId, route: DeliveryRouteSnapshot) =>
+    Effect.gen(function* () {
+      const nowMillis = yield* Clock.currentTimeMillis
+      const current = records.get(id)
+      if (current === undefined) {
+        return yield* Effect.fail(new DeadLetterRecoveryError({
+          deliveryId: id,
+          reason: "NotFound",
+        }))
+      }
+      if (current.state._tag !== "DeadLettered") {
+        return yield* Effect.fail(new DeadLetterRecoveryError({
+          deliveryId: id,
+          reason: "NotDeadLettered",
+        }))
+      }
+      if (current.destinationId !== route.destinationId) {
+        return yield* Effect.fail(new DeadLetterDestinationMismatchError({
+          deliveryId: id,
+          deliveryDestinationId: current.destinationId,
+          repairDestinationId: route.destinationId,
+        }))
+      }
+      records.set(id, Delivery.make({
+        ...current,
+        state: DeliveryState.cases.Pending.make({}),
+      }))
+      routes.set(id, route)
+      claims.delete(id)
+      nextEligibleAt.set(id, nowMillis)
+    }))
+  const terminateDeadLetter = Effect.fn(
+    "DeliveryRepository.terminateDeadLetter",
+  )((id: DeliveryId) =>
+    Effect.gen(function* () {
+      const current = records.get(id)
+      if (current === undefined) {
+        return yield* Effect.fail(new DeadLetterRecoveryError({
+          deliveryId: id,
+          reason: "NotFound",
+        }))
+      }
+      if (current.state._tag !== "DeadLettered") {
+        return yield* Effect.fail(new DeadLetterRecoveryError({
+          deliveryId: id,
+          reason: "NotDeadLettered",
+        }))
+      }
+      records.set(id, Delivery.make({
+        ...current,
+        state: DeliveryState.cases.Terminated.make({
+          reason: "OperatorTerminated",
+        }),
+      }))
+      claims.delete(id)
     }))
   const claimPending = Effect.fn("DeliveryRepository.claimPending")(
     (
@@ -354,6 +420,8 @@ const makeMemoryRepository = (
     recordAttempt,
     listDeadLetters,
     retryDeadLetter,
+    repairDeadLetter,
+    terminateDeadLetter,
     claimPending,
     renewClaim,
     completeClaim,
@@ -571,10 +639,14 @@ export const makeRelayHttpApplicationLayer = (
   const intakeAuthorization = IntakeAuthorizationLive.pipe(
     Layer.provide(ConfigProvider.layer(configProvider)),
   )
+  const operationsAuthorization = OperationsAuthorizationLive.pipe(
+    Layer.provide(ConfigProvider.layer(configProvider)),
+  )
 
   return HttpRouter.serve(DeliveryHttpRoutes).pipe(
     Layer.provideMerge(application),
     Layer.provideMerge(intakeAuthorization),
+    Layer.provideMerge(operationsAuthorization),
     Layer.provideMerge(readinessLayer),
     Layer.provideMerge(httpServerLayer),
   )

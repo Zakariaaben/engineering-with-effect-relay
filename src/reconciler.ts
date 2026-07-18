@@ -5,6 +5,7 @@ import {
   Layer,
   Metric,
   Schedule,
+  Schema,
   Semaphore,
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
@@ -38,9 +39,11 @@ const reconciliationClaimLag = Metric.histogram(
   },
 )
 
-export interface ReconciliationReport {
-  readonly claimed: number
-}
+export const ReconciliationReport = Schema.Struct({
+  claimed: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+})
+export interface ReconciliationReport extends
+  Schema.Schema.Type<typeof ReconciliationReport> {}
 
 export interface ReconcilerHooks {
   readonly afterClaim?: (

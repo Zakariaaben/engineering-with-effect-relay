@@ -121,6 +121,8 @@ const makePersistenceLayer = (
       }),
     listDeadLetters: () => Effect.succeed([]),
     retryDeadLetter: () => Effect.void,
+    repairDeadLetter: () => Effect.void,
+    terminateDeadLetter: () => Effect.void,
     claimPending: (ownerId, destinationId, limit, leaseDurationMillis) =>
       Effect.sync(() => {
         state.observedClaimLimits.push(limit)
@@ -261,6 +263,7 @@ const configuration = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: "dst-recovery",
   RELAY_DESTINATION_URL: "https://hooks.example.test/recovery",
   RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+  RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
 })
 
 describe("C08-02 durable reconciliation", () => {
@@ -342,6 +345,8 @@ describe("C08-02 durable reconciliation", () => {
       recordAttempt: () => Effect.void,
       listDeadLetters: () => Effect.succeed([]),
       retryDeadLetter: () => Effect.void,
+      repairDeadLetter: () => Effect.void,
+      terminateDeadLetter: () => Effect.void,
       claimPending: () => Effect.succeed([]),
       renewClaim: (_deliveryId, claim) => Effect.succeed(claim),
       completeClaim: () => Effect.void,

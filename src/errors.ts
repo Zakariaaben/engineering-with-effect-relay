@@ -84,7 +84,20 @@ export class DeadLetterRecoveryError extends
     "DeadLetterRecoveryError",
     {
       deliveryId: DeliveryId,
-      reason: Schema.Literal("NotDeadLettered"),
+      reason: Schema.Literals([
+        "NotFound",
+        "NotDeadLettered",
+      ]),
+    },
+  ) {}
+
+export class DeadLetterDestinationMismatchError extends
+  Schema.TaggedErrorClass<DeadLetterDestinationMismatchError>()(
+    "DeadLetterDestinationMismatchError",
+    {
+      deliveryId: DeliveryId,
+      deliveryDestinationId: DestinationId,
+      repairDestinationId: DestinationId,
     },
   ) {}
 
@@ -98,6 +111,8 @@ export class DeliveryRepositoryError extends Schema.TaggedErrorClass<DeliveryRep
       "recordAttempt",
       "listDeadLetters",
       "retryDeadLetter",
+      "repairDeadLetter",
+      "terminateDeadLetter",
       "claimPending",
       "renewClaim",
       "completeClaim",

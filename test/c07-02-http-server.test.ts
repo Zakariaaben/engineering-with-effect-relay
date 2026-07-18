@@ -4,21 +4,25 @@ import {
   Context,
   Effect,
   Layer,
+  Option,
   Redacted,
 } from "effect"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServer from "effect/unstable/http/HttpServer"
+import { DeliveryOperations } from "../src/deliveryOperations.ts"
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
 import { EventIntake } from "../src/eventIntake.ts"
 import { DeliveryOverloaded } from "../src/errors.ts"
 import {
   DeliveryHttpRoutes,
   IntakeAuthorization,
+  OperationsAuthorization,
 } from "../src/httpServer.ts"
 import { RelayPersistenceMemory } from "../src/layers.ts"
 import { DestinationId } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import { RelayReadiness } from "../src/readiness.ts"
+import { Reconciler } from "../src/reconciler.ts"
 import {
   event,
   makeGate,
@@ -36,6 +40,7 @@ const configuration = (capacity = 4) =>
     RELAY_DESTINATION_URL: "https://hooks.example.test/http",
     RELAY_GLOBAL_CONCURRENCY: 1,
     RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+    RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
   })
 
 const post = (
@@ -100,6 +105,12 @@ const makeHandler = (
           token: Redacted.make("intake-secret"),
         }),
       )),
+      Layer.provide(Layer.succeed(
+        OperationsAuthorization,
+        OperationsAuthorization.of({
+          operationsBearerAuth: (effect) => effect,
+        }),
+      )),
     ),
     { disableLogger: true },
   )
@@ -111,6 +122,16 @@ const makeHandler = (
   const eventIntake = EventIntake.of({
     accept: () => Effect.die(new Error("not used by this adapter test")),
   })
+  const operations = DeliveryOperations.of({
+    status: () => Effect.succeed(Option.none()),
+    listDeadLetters: () => Effect.succeed([]),
+    retryDeadLetter: () => Effect.die(new Error("not used")),
+    repairDeadLetter: () => Effect.die(new Error("not used")),
+    terminateDeadLetter: () => Effect.die(new Error("not used")),
+  })
+  const reconciler = Reconciler.of({
+    reconcileOnce: () => Effect.succeed({ claimed: 0 }),
+  })
   return {
     dispose: webHandler.dispose,
     handler: (request: Request) =>
@@ -118,6 +139,8 @@ const makeHandler = (
         request,
         Context.make(DeliverySupervisor, service).pipe(
           Context.add(EventIntake, eventIntake),
+          Context.add(DeliveryOperations, operations),
+          Context.add(Reconciler, reconciler),
           Context.add(RelayReadiness, readiness),
         ),
       ),

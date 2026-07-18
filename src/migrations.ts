@@ -264,12 +264,54 @@ export const addAttemptsAndDeadLetters = Effect.gen(function* () {
   `
 })
 
+export const addOperationalTermination = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  yield* sql`
+    ALTER TABLE deliveries
+    DROP CONSTRAINT deliveries_state_check,
+    DROP CONSTRAINT deliveries_state_status_check,
+    ADD CONSTRAINT deliveries_state_check CHECK (
+      state IN (
+        'Pending',
+        'Delivered',
+        'Rejected',
+        'DeadLettered',
+        'Terminated'
+      )
+    ),
+    ADD CONSTRAINT deliveries_state_status_check CHECK (
+      (
+        state IN ('Pending', 'Terminated')
+        AND status IS NULL
+        AND dead_letter_reason IS NULL
+      )
+      OR
+      (
+        state IN ('Delivered', 'Rejected')
+        AND status IS NOT NULL
+        AND dead_letter_reason IS NULL
+      )
+      OR
+      (
+        state = 'DeadLettered'
+        AND status IS NULL
+        AND dead_letter_reason IN (
+          'ProviderProtocolFailure',
+          'RetryBudgetExhausted'
+        )
+      )
+    )
+  `
+})
+
 export const RelayMigrations = Migrator.fromRecord({
   "0001_create_relay_tables": createRelayTables,
   "0002_add_delivery_claims": addDeliveryClaims,
   "0003_atomic_intake": addAtomicIntake,
   "0004_leased_claims": addLeasedClaims,
   "0005_attempts_and_dead_letters": addAttemptsAndDeadLetters,
+  "0006_operational_termination": addOperationalTermination,
 })
 
 export const RelayMigrationsLive = Layer.effectDiscard(

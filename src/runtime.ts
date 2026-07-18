@@ -56,7 +56,9 @@ export interface RelayApplication {
   readonly deadLetters: (
     limit: number,
   ) => Promise<ReadonlyArray<DeliveryStatus>>
-  readonly retryDeadLetter: (id: DeliveryId) => Promise<void>
+  readonly retryDeadLetter: (id: DeliveryId) => Promise<DeliveryStatus>
+  readonly repairDeadLetter: (id: DeliveryId) => Promise<DeliveryStatus>
+  readonly terminateDeadLetter: (id: DeliveryId) => Promise<DeliveryStatus>
   readonly deliveryResults: Stream.Stream<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
@@ -125,7 +127,21 @@ const deadLetters = Effect.fn("Relay.deadLetters")(
 const retryDeadLetter = Effect.fn("Relay.retryDeadLetter")(
   function* (id: DeliveryId) {
     const operations = yield* DeliveryOperations
-    yield* operations.retryDeadLetter(id)
+    return yield* operations.retryDeadLetter(id)
+  },
+)
+
+const repairDeadLetter = Effect.fn("Relay.repairDeadLetter")(
+  function* (id: DeliveryId) {
+    const operations = yield* DeliveryOperations
+    return yield* operations.repairDeadLetter(id)
+  },
+)
+
+const terminateDeadLetter = Effect.fn("Relay.terminateDeadLetter")(
+  function* (id: DeliveryId) {
+    const operations = yield* DeliveryOperations
+    return yield* operations.terminateDeadLetter(id)
   },
 )
 
@@ -209,6 +225,8 @@ export const startRelayApplication = async (options: {
         runtime.runPromise(deliverConfiguredCandidate(candidate)),
       deliveryStatus: (id) => runtime.runPromise(deliveryStatus(id)),
       loadMetrics: () => runtime.runPromise(loadMetrics()),
+      repairDeadLetter: (id) =>
+        runtime.runPromise(repairDeadLetter(id)),
       httpAddress: address,
       isReady: () =>
         shutdownPromise === undefined
@@ -216,6 +234,8 @@ export const startRelayApplication = async (options: {
           : Promise.resolve(false),
       retryDeadLetter: (id) =>
         runtime.runPromise(retryDeadLetter(id)),
+      terminateDeadLetter: (id) =>
+        runtime.runPromise(terminateDeadLetter(id)),
       shutdown,
     }
   } catch (error) {

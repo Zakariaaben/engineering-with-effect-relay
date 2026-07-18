@@ -235,6 +235,7 @@ const configuration = (endpoint: string) => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_ID: String(destination.id),
   RELAY_DESTINATION_URL: endpoint,
   RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+  RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
 })
 
 describe("C08-03 atomic acceptance and ingestion idempotency", () => {
@@ -380,6 +381,8 @@ describe("C08-03 atomic acceptance and ingestion idempotency", () => {
           recordAttempt: () => Effect.void,
           listDeadLetters: () => Effect.succeed([]),
           retryDeadLetter: () => Effect.void,
+          repairDeadLetter: () => Effect.void,
+          terminateDeadLetter: () => Effect.void,
           claimPending: () =>
             Effect.sync(() => {
               if (claimed || terminal !== undefined) return []

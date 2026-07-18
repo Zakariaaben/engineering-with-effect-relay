@@ -9,6 +9,7 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient"
 import * as OpenApi from "effect/unstable/httpapi/OpenApi"
 import {
   deliveryAuthorizationClientLayer,
+  operationsAuthorizationClientLayer,
   RelayHttpApi,
   UnauthorizedProblem,
 } from "../src/httpServer.ts"
@@ -22,12 +23,14 @@ import {
 } from "./fixtures.ts"
 
 const intakeToken = Redacted.make("intake-secret")
+const operationsToken = Redacted.make("operations-secret")
 
 const configuration = () => ConfigProvider.fromUnknown({
   RELAY_DESTINATION_AUTHORIZATION: "destination-secret",
   RELAY_DESTINATION_ID: "dst-contract",
   RELAY_DESTINATION_URL: "https://hooks.example.test/contract",
   RELAY_INTAKE_AUTHORIZATION: Redacted.value(intakeToken),
+  RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
 })
 
 const callGeneratedClient = <A>(
@@ -44,6 +47,7 @@ const callGeneratedClient = <A>(
     return yield* use(client)
   }).pipe(
     Effect.provide(deliveryAuthorizationClientLayer(token)),
+    Effect.provide(operationsAuthorizationClientLayer(operationsToken)),
     Effect.provide(NodeHttpClient.layerNodeHttp),
     Effect.runPromise,
   )
@@ -114,7 +118,7 @@ describe("C07-03 HttpApi contract", () => {
 
     expect(spec.openapi).toBe("3.1.0")
     expect(spec.info).toMatchObject({
-      title: "Relay intake API",
+      title: "Relay intake and operations API",
       version: "1.0.0",
     })
     expect(operation?.requestBody?.content["application/json"]).toBeDefined()

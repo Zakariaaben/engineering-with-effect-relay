@@ -36,6 +36,7 @@ describe("C07-08 trace propagation", () => {
         RELAY_DESTINATION_ID: "dst-tracing",
         RELAY_DESTINATION_URL: "https://hooks.example.test/trace",
         RELAY_INTAKE_AUTHORIZATION: "intake-secret",
+        RELAY_OPERATIONS_AUTHORIZATION: "operations-secret",
       }),
       httpClientLayer: makeHttpClientLayer((request) =>
         Effect.sync(() => {
