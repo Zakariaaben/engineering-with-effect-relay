@@ -74,7 +74,7 @@ deduplicates it. Relay therefore does not claim exactly-once delivery. This is
 still an in-memory, single-process checkpoint: retry state and attempt history
 do not survive a crash, and capacity is not coordinated across processes.
 
-## C06-14 load-governance checkpoint
+## M5 checkpoint
 
 Relay now admits delivery requests through a bounded local Queue consumed by a
 scoped Stream. A separate admission permit bounds the complete accepted
@@ -89,3 +89,9 @@ and cumulative rejections. The queue and permits are process-local: they do not
 coordinate a fleet, provide durable intake, or reserve queue space per tenant.
 Relay does not add a proactive time-based rate limit without a destination rate
 contract.
+
+The M5 act gate keeps one slow destination saturated while a producer repeatedly
+offers excess work, releases one delivery, and submits one replacement. The
+test proves admitted work never exceeds its configured capacity, active work
+never exceeds the per-destination limit, every excess offer is rejected
+visibly, and all accepted work can drain without sleeps or wall-clock guesses.
