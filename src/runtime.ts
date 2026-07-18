@@ -3,6 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import * as Http from "node:http"
 import {
   ConfigProvider,
+  Context,
   Effect,
   Layer,
   ManagedRuntime,
@@ -24,6 +25,7 @@ import {
   type RelayPersistenceLayer,
 } from "./layers.ts"
 import type { DeliveryResult } from "./model.ts"
+import { RelayReadiness, RelayReadinessLive } from "./readiness.ts"
 
 export type RegisterShutdownHook = (
   shutdown: () => Promise<void>,
@@ -36,6 +38,7 @@ export interface RelayApplication {
   readonly concurrencyMetrics: () => Promise<DeliveryConcurrencyMetrics>
   readonly loadMetrics: () => Promise<DeliveryLoadMetrics>
   readonly httpAddress: string
+  readonly isReady: () => Promise<boolean>
   readonly shutdown: () => Promise<void>
 }
 
@@ -83,6 +86,7 @@ export const startRelayApplication = async (options: {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>
   readonly httpServerLayer?: RelayHttpServerLayer
   readonly persistenceLayer?: RelayPersistenceLayer
+  readonly readinessLayer?: Layer.Layer<RelayReadiness>
   readonly tracer?: Tracer.Tracer
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
@@ -95,6 +99,7 @@ export const startRelayApplication = async (options: {
     ),
     options.configProvider,
     options.persistenceLayer ?? RelayPersistenceLive,
+    options.readinessLayer ?? RelayReadinessLive,
   )
   const runtimeLayer = options.tracer === undefined
     ? applicationLayer
@@ -106,20 +111,33 @@ export const startRelayApplication = async (options: {
   const runtime = ManagedRuntime.make(runtimeLayer)
   let removeShutdownHook = () => {}
   let shutdownPromise: Promise<void> | undefined
+  let readiness: Context.Service.Shape<typeof RelayReadiness> | undefined
   const shutdown = (): Promise<void> => {
     if (shutdownPromise !== undefined) {
       return shutdownPromise
     }
     removeShutdownHook()
-    shutdownPromise = runtime.dispose()
+    const markNotReady = readiness === undefined
+      ? Promise.resolve()
+      : runtime.runPromise(readiness.markNotReady)
+    shutdownPromise = markNotReady.then(
+      () => runtime.dispose(),
+      async (error) => {
+        await runtime.dispose()
+        throw error
+      },
+    )
     return shutdownPromise
   }
 
   try {
-    await runtime.context()
+    const context = await runtime.context()
+    const startedReadiness = Context.get(context, RelayReadiness)
+    readiness = startedReadiness
     const results = await runtime.runPromise(deliveryResults())
     const address = await runtime.runPromise(httpAddress())
     removeShutdownHook = options.registerShutdownHook(shutdown)
+    await runtime.runPromise(startedReadiness.markReady)
 
     return {
       activeDeliveryCount: () =>
@@ -131,6 +149,10 @@ export const startRelayApplication = async (options: {
         runtime.runPromise(deliverConfiguredCandidate(candidate)),
       loadMetrics: () => runtime.runPromise(loadMetrics()),
       httpAddress: address,
+      isReady: () =>
+        shutdownPromise === undefined
+          ? runtime.runPromise(startedReadiness.current)
+          : Promise.resolve(false),
       shutdown,
     }
   } catch (error) {

@@ -30,6 +30,10 @@ import {
   RelayIntakeStore,
 } from "./services.ts"
 import { AppConfigurationLive } from "./configuration.ts"
+import {
+  RelayReadiness,
+  RelayReadinessLive,
+} from "./readiness.ts"
 
 export const DeliveryRepositoryMemory = Layer.sync(
   DeliveryRepository,
@@ -137,6 +141,7 @@ export const makeRelayHttpApplicationLayer = (
   httpServerLayer: RelayHttpServerLayer,
   configProvider: ConfigProvider.ConfigProvider,
   persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
+  readinessLayer: Layer.Layer<RelayReadiness> = RelayReadinessLive,
 ) => {
   const application = makeRelayApplicationLayer(
     httpClientLayer,
@@ -150,6 +155,7 @@ export const makeRelayHttpApplicationLayer = (
   return HttpRouter.serve(DeliveryHttpRoutes).pipe(
     Layer.provideMerge(application),
     Layer.provideMerge(intakeAuthorization),
+    Layer.provideMerge(readinessLayer),
     Layer.provideMerge(httpServerLayer),
   )
 }

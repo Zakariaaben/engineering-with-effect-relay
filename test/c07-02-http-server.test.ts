@@ -17,6 +17,7 @@ import {
 import { RelayPersistenceMemory } from "../src/layers.ts"
 import { DestinationId } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
+import { RelayReadiness } from "../src/readiness.ts"
 import {
   event,
   makeGate,
@@ -96,12 +97,19 @@ const makeHandler = (
     ),
     { disableLogger: true },
   )
+  const readiness = RelayReadiness.of({
+    current: Effect.succeed(true),
+    markReady: Effect.void,
+    markNotReady: Effect.void,
+  })
   return {
     dispose: webHandler.dispose,
     handler: (request: Request) =>
       webHandler.handler(
         request,
-        Context.make(DeliverySupervisor, service),
+        Context.make(DeliverySupervisor, service).pipe(
+          Context.add(RelayReadiness, readiness),
+        ),
       ),
   }
 }
