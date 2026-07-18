@@ -37,6 +37,34 @@ const withDecision = (
   decision: DeliveryAttempt["decision"],
 ): DeliveryAttempt => ({ ...attempt, decision })
 
+const logDeliveryAttempt = (attempt: DeliveryAttempt) => {
+  const annotations: Record<string, unknown> = {
+    "relay.attempt_number": attempt.ordinal,
+    "relay.attempt_duration_ms":
+      attempt.completedAtMillis - attempt.startedAtMillis,
+    "relay.attempt_outcome": attempt.outcome._tag,
+    "relay.attempt_decision": attempt.decision._tag,
+  }
+
+  if ("status" in attempt.outcome) {
+    annotations["relay.http_status"] = attempt.outcome.status
+  }
+  if (attempt.outcome._tag === "Retryable") {
+    annotations["relay.retry_reason"] = attempt.outcome.reason
+  }
+  if (attempt.decision._tag === "RetryScheduled") {
+    annotations["relay.retry_delay_ms"] =
+      attempt.decision.delayMillis
+  }
+
+  const log = attempt.decision._tag === "Exhausted"
+    ? Effect.logWarning
+    : Effect.logInfo
+  return log("delivery.attempt.finished").pipe(
+    Effect.annotateLogs(annotations),
+  )
+}
+
 const isRetryable = (outcome: DeliveryOutcomeType): boolean =>
   DeliveryOutcome.$match(outcome, {
     Delivered: () => false,
@@ -192,7 +220,9 @@ export const runDeliveryWithRetry = Effect.fn(
   const nextOrdinal = yield* Ref.make(0)
   const history = yield* Ref.make<ReadonlyArray<DeliveryAttempt>>([])
   const append = (attempt: DeliveryAttempt) =>
-    Ref.update(history, (current) => [...current, attempt])
+    Ref.update(history, (current) => [...current, attempt]).pipe(
+      Effect.andThen(logDeliveryAttempt(attempt)),
+    )
 
   const execute = Effect.gen(function* () {
     const ordinal = yield* Ref.updateAndGet(
