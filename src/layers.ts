@@ -1,11 +1,14 @@
 import { NodeCrypto } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import {
   DestinationClientLive,
 } from "./destinationClient.ts"
 import { DeliveryEventsLive } from "./deliveryEvents.ts"
 import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
+import { DeliveryHttpRoutes } from "./httpServer.ts"
 import type {
   Delivery,
   DeliveryId,
@@ -58,5 +61,25 @@ export const makeRelayApplicationLayer = (
   return DeliverySupervisorLive.pipe(
     Layer.provideMerge(DeliveryEventsLive),
     Layer.provide(dependencies),
+  )
+}
+
+export type RelayHttpServerLayer = ReturnType<
+  typeof NodeHttpServer.layer
+>
+
+export const makeRelayHttpApplicationLayer = (
+  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
+  httpServerLayer: RelayHttpServerLayer,
+  configProvider: ConfigProvider.ConfigProvider,
+) => {
+  const application = makeRelayApplicationLayer(
+    httpClientLayer,
+    configProvider,
+  )
+
+  return HttpRouter.serve(DeliveryHttpRoutes).pipe(
+    Layer.provideMerge(application),
+    Layer.provideMerge(httpServerLayer),
   )
 }

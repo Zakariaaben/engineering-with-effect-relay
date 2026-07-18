@@ -9,6 +9,7 @@ import {
   makeGate,
   makeHttpClientLayer,
   makeHttpResponse,
+  makeTestHttpServerLayer,
 } from "./fixtures.ts"
 
 const validConfig = () => ConfigProvider.fromUnknown({
@@ -63,6 +64,7 @@ describe("C03-08 runtime boundary", () => {
 
     const application = await startRelayApplication({
       httpClientLayer,
+      httpServerLayer: makeTestHttpServerLayer(),
       configProvider: validConfig(),
       registerShutdownHook: shutdown.register,
     })
@@ -86,6 +88,7 @@ describe("C03-08 runtime boundary", () => {
     const shutdown = makeShutdownHarness()
 
     await expect(startRelayApplication({
+      httpServerLayer: makeTestHttpServerLayer(),
       configProvider: ConfigProvider.fromUnknown({
         RELAY_DESTINATION_AUTHORIZATION: "must-not-leak",
       }),
@@ -106,6 +109,7 @@ describe("C03-08 runtime boundary", () => {
     const shutdown = makeShutdownHarness()
     const application = await startRelayApplication({
       httpClientLayer,
+      httpServerLayer: makeTestHttpServerLayer(),
       configProvider: validConfig(),
       registerShutdownHook: shutdown.register,
     })
