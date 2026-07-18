@@ -28,6 +28,7 @@ import {
   DestinationId,
   RelayEvent,
 } from "./model.ts"
+import { RelayReadiness } from "./readiness.ts"
 
 const maxEventBodySize = FileSystem.KiB(16)
 
@@ -87,6 +88,17 @@ export class DeliveryOverloadedProblem extends
     error: Schema.Literal("overloaded"),
   }, {
     description: "Relay has no admission capacity for this delivery.",
+    httpApiStatus: 503,
+  })
+{}
+
+export class RelayNotReadyProblem extends
+  Schema.ErrorClass<RelayNotReadyProblem>(
+    "Relay/RelayNotReadyProblem",
+  )({
+    error: Schema.Literal("not_ready"),
+  }, {
+    description: "Relay is not accepting new delivery work.",
     httpApiStatus: 503,
   })
 {}
@@ -221,6 +233,7 @@ export const SubmitDelivery = HttpApiEndpoint.post(
     success: DeliveryHttpResult,
     error: [
       DeliveryOverloadedProblem,
+      RelayNotReadyProblem,
       DeliveryInternalProblem,
     ],
   },
@@ -255,6 +268,12 @@ export const DeliveryHttpHandlers = HttpApiBuilder.group(
   (handlers) =>
     handlers.handle("submit", ({ payload }) =>
       Effect.gen(function* () {
+        const readiness = yield* RelayReadiness
+        if (!(yield* readiness.current)) {
+          return yield* Effect.fail(
+            new RelayNotReadyProblem({ error: "not_ready" }),
+          )
+        }
         const supervisor = yield* DeliverySupervisor
         return yield* supervisor.deliver(payload).pipe(
           Effect.map(toHttpResult),
@@ -293,6 +312,26 @@ const ResponsePolicy = HttpRouter.middleware(
   { global: true },
 )
 
+const ReadinessResponse = Schema.Struct({
+  status: Schema.Literals(["ready", "not_ready"]),
+})
+const encodeReadiness = HttpServerResponse.schemaJson(
+  ReadinessResponse,
+)
+
+const ReadinessHttpRoute = HttpRouter.add(
+  "GET",
+  "/health/ready",
+  Effect.gen(function* () {
+    const readiness = yield* RelayReadiness
+    const ready = yield* readiness.current
+    return yield* encodeReadiness(
+      { status: ready ? "ready" : "not_ready" },
+      { status: ready ? 200 : 503 },
+    ).pipe(Effect.orDie)
+  }),
+)
+
 export const DeliveryHttpRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(RelayHttpApi, {
     openapiPath: "/openapi.json",
@@ -301,5 +340,6 @@ export const DeliveryHttpRoutes = Layer.mergeAll(
     Layer.provide(RequestContractLive),
     Layer.provide(DeliveryAuthorizationLive),
   ),
+  ReadinessHttpRoute,
   ResponsePolicy,
 )
