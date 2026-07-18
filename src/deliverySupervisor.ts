@@ -231,7 +231,14 @@ export const makeDeliverySupervisorLive = (
               ),
             ),
         )
-        return yield* task.pipe(Effect.tap(deliveryEvents.publish))
+        return yield* task.pipe(
+          Effect.annotateLogs({
+            "relay.event_id": event.id,
+            "relay.delivery_id": deliveryId,
+            "relay.destination_id": destination.id,
+          }),
+          Effect.tap(deliveryEvents.publish),
+        )
       },
     )
 
@@ -316,6 +323,13 @@ export const makeDeliverySupervisorLive = (
               if (hooks.afterIntakeCommit !== undefined) {
                 yield* hooks.afterIntakeCommit(delivery)
               }
+              yield* Effect.logInfo("delivery.intent.persisted").pipe(
+                Effect.annotateLogs({
+                  "relay.event_id": event.id,
+                  "relay.delivery_id": deliveryId,
+                  "relay.destination_id": destination.id,
+                }),
+              )
 
               const result = yield* Deferred.make<DeliveryResult>()
               const cancelled = yield* Deferred.make<void>()
