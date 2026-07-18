@@ -13,6 +13,7 @@ import {
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as HttpServer from "effect/unstable/http/HttpServer"
 import { DeliveryEvents } from "./deliveryEvents.ts"
+import { EventIntake } from "./eventIntake.ts"
 import {
   DeliverySupervisor,
   type DeliveryConcurrencyMetrics,
@@ -24,7 +25,11 @@ import {
   type RelayHttpServerLayer,
   type RelayPersistenceLayer,
 } from "./layers.ts"
-import type { DeliveryResult } from "./model.ts"
+import type {
+  DeliveryResult,
+  EventAcceptance,
+  IngestionKey,
+} from "./model.ts"
 import { RelayReadiness, RelayReadinessLive } from "./readiness.ts"
 
 export type RegisterShutdownHook = (
@@ -32,6 +37,10 @@ export type RegisterShutdownHook = (
 ) => () => void
 
 export interface RelayApplication {
+  readonly accept: (
+    ingestionKey: IngestionKey,
+    candidate: unknown,
+  ) => Promise<EventAcceptance>
   readonly deliver: (candidate: unknown) => Promise<DeliveryResult>
   readonly deliveryResults: Stream.Stream<DeliveryResult>
   readonly activeDeliveryCount: () => Promise<number>
@@ -41,6 +50,13 @@ export interface RelayApplication {
   readonly isReady: () => Promise<boolean>
   readonly shutdown: () => Promise<void>
 }
+
+const acceptConfiguredEvent = Effect.fn(
+  "Relay.acceptConfiguredEvent",
+)(function* (ingestionKey: IngestionKey, candidate: unknown) {
+  const intake = yield* EventIntake
+  return yield* intake.accept(ingestionKey, candidate)
+})
 
 const deliverConfiguredCandidate = Effect.fn(
   "Relay.deliverConfiguredCandidate",
@@ -140,6 +156,8 @@ export const startRelayApplication = async (options: {
     await runtime.runPromise(startedReadiness.markReady)
 
     return {
+      accept: (ingestionKey, candidate) =>
+        runtime.runPromise(acceptConfiguredEvent(ingestionKey, candidate)),
       activeDeliveryCount: () =>
         runtime.runPromise(activeDeliveryCount()),
       concurrencyMetrics: () =>

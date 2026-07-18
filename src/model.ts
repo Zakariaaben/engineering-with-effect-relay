@@ -15,6 +15,27 @@ export const DestinationId = Schema.String.check(
 ).pipe(Schema.brand("DestinationId"))
 export type DestinationId = Schema.Schema.Type<typeof DestinationId>
 
+export const IngestionKey = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+).pipe(Schema.brand("IngestionKey"))
+export type IngestionKey = Schema.Schema.Type<typeof IngestionKey>
+
+export const RequestFingerprint = Schema.String.check(
+  Schema.isPattern(/^[0-9a-f]{64}$/),
+).pipe(Schema.brand("RequestFingerprint"))
+export type RequestFingerprint = Schema.Schema.Type<
+  typeof RequestFingerprint
+>
+
+export const ConfigurationVersion = Schema.Int.check(
+  Schema.isGreaterThan(0),
+).pipe(Schema.brand("ConfigurationVersion"))
+export type ConfigurationVersion = Schema.Schema.Type<
+  typeof ConfigurationVersion
+>
+
 export const InvoiceId = Schema.String.check(
   Schema.isPattern(/^inv-[a-z0-9]+(?:-[a-z0-9]+)*$/),
 ).pipe(Schema.brand("InvoiceId"))
@@ -36,6 +57,36 @@ export const RelayEvent = Schema.Struct({
   ),
   invoiceId: InvoiceId,
   amountCents: AmountCents,
+})
+
+export interface EventSubmission extends
+  Schema.Schema.Type<typeof EventSubmission> {}
+
+export const EventSubmission = Schema.Struct({
+  topic: Schema.Literal("invoice.created"),
+  payload: Schema.Struct({
+    invoiceId: InvoiceId,
+    amountCents: AmountCents,
+  }),
+})
+
+export interface DeliveryRouteSnapshot extends
+  Schema.Schema.Type<typeof DeliveryRouteSnapshot> {}
+
+export const DeliveryRouteSnapshot = Schema.Struct({
+  destinationId: DestinationId,
+  endpoint: Schema.URL,
+  configurationVersion: ConfigurationVersion,
+})
+
+export interface EventAcceptance extends
+  Schema.Schema.Type<typeof EventAcceptance> {}
+
+export const EventAcceptance = Schema.Struct({
+  eventId: EventId,
+  deliveryId: DeliveryId,
+  acceptedAtMillis: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  replayed: Schema.Boolean,
 })
 
 export const DeliveryState = Schema.TaggedUnion({

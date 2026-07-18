@@ -6,6 +6,7 @@ import {
   Schema,
 } from "effect"
 import {
+  ConfigurationVersion,
   Destination,
   DestinationId,
 } from "./model.ts"
@@ -51,8 +52,12 @@ export const defaultDeliveryRecovery: DeliveryRecovery = {
   pollInterval: Duration.seconds(1),
 }
 
+export const defaultDestinationConfigurationVersion =
+  ConfigurationVersion.make(1)
+
 export class AppConfiguration extends Context.Service<AppConfiguration, {
   readonly destination: Destination
+  readonly destinationConfigurationVersion: ConfigurationVersion
   readonly concurrency: DeliveryConcurrency
   readonly flow: DeliveryFlow
   readonly recovery: DeliveryRecovery
@@ -67,6 +72,11 @@ const destination = Config.all({
   endpoint: Config.url("RELAY_DESTINATION_URL"),
   authorization: Config.redacted("RELAY_DESTINATION_AUTHORIZATION"),
 })
+
+const destinationConfigurationVersion = Config.schema(
+  ConfigurationVersion,
+  "RELAY_DESTINATION_CONFIGURATION_VERSION",
+).pipe(Config.withDefault(defaultDestinationConfigurationVersion))
 
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const PositiveFiniteDuration = Schema.DurationFromString.check(
@@ -136,11 +146,26 @@ const recovery = Config.all({
 
 export const AppConfigurationLive = Layer.effect(
   AppConfiguration,
-  Config.all({ destination, concurrency, flow, recovery, resilience }).pipe(
-    Config.map(({ concurrency, destination, flow, recovery, resilience }) =>
+  Config.all({
+    destination,
+    destinationConfigurationVersion,
+    concurrency,
+    flow,
+    recovery,
+    resilience,
+  }).pipe(
+    Config.map(({
+      concurrency,
+      destination,
+      destinationConfigurationVersion,
+      flow,
+      recovery,
+      resilience,
+    }) =>
       AppConfiguration.of({
         concurrency,
         destination: Destination.make(destination),
+        destinationConfigurationVersion,
         flow,
         recovery,
         resilience,

@@ -20,12 +20,17 @@ import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint"
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup"
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware"
 import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity"
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema"
 import * as OpenApi from "effect/unstable/httpapi/OpenApi"
 import { DeliverySupervisor } from "./deliverySupervisor.ts"
+import { EventIntake } from "./eventIntake.ts"
 import type { DeliveryResult } from "./model.ts"
 import {
   DeliveryId,
   DestinationId,
+  EventAcceptance,
+  EventSubmission,
+  IngestionKey,
   RelayEvent,
 } from "./model.ts"
 import { RelayReadiness } from "./readiness.ts"
@@ -111,6 +116,18 @@ export class DeliveryInternalProblem extends
   }, {
     description: "Relay could not create or persist the delivery.",
     httpApiStatus: 500,
+  })
+{}
+
+export class IngestionConflictProblem extends
+  Schema.ErrorClass<IngestionConflictProblem>(
+    "Relay/IngestionConflictProblem",
+  )({
+    error: Schema.Literal("idempotency_conflict"),
+  }, {
+    description:
+      "The idempotency key was already used for a different request.",
+    httpApiStatus: 409,
   })
 {}
 
@@ -246,8 +263,34 @@ export const SubmitDelivery = HttpApiEndpoint.post(
   ),
 )
 
+export const SubmitEvent = HttpApiEndpoint.post(
+  "submit",
+  "/events",
+  {
+    headers: Schema.Struct({
+      "idempotency-key": IngestionKey,
+    }),
+    payload: EventSubmission,
+    success: EventAcceptance.pipe(HttpApiSchema.status(202)),
+    error: [
+      IngestionConflictProblem,
+      RelayNotReadyProblem,
+      DeliveryInternalProblem,
+    ],
+  },
+).pipe(
+  (endpoint) => endpoint.middleware(RequestContract),
+  (endpoint) => endpoint.middleware(DeliveryAuthorization),
+  (endpoint) => endpoint.annotate(
+    OpenApi.Summary,
+    "Accept one event idempotently",
+  ),
+)
+
 export const RelayHttpApi = HttpApi.make("RelayApi").add(
   HttpApiGroup.make("deliveries").add(SubmitDelivery),
+).add(
+  HttpApiGroup.make("events").add(SubmitEvent),
 ).pipe(
   (api) => api.annotate(OpenApi.Title, "Relay intake API"),
   (api) => api.annotate(OpenApi.Version, "1.0.0"),
@@ -303,6 +346,49 @@ export const DeliveryHttpHandlers = HttpApiBuilder.group(
       }))
 )
 
+export const EventHttpHandlers = HttpApiBuilder.group(
+  RelayHttpApi,
+  "events",
+  (handlers) =>
+    handlers.handle("submit", ({ headers, payload }) =>
+      Effect.gen(function* () {
+        const readiness = yield* RelayReadiness
+        if (!(yield* readiness.current)) {
+          return yield* Effect.fail(
+            new RelayNotReadyProblem({ error: "not_ready" }),
+          )
+        }
+        const intake = yield* EventIntake
+        return yield* intake.accept(
+          headers["idempotency-key"],
+          payload,
+        ).pipe(
+          Effect.catchTags({
+            DeliveryRepositoryError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
+              })),
+            EventIdentityError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
+              })),
+            IngestionConflictError: () =>
+              Effect.fail(new IngestionConflictProblem({
+                error: "idempotency_conflict",
+              })),
+            InvalidEventError: () =>
+              Effect.fail(new InvalidEventProblem({
+                error: "invalid_event",
+              })),
+            RelayIntakeStoreError: () =>
+              Effect.fail(new DeliveryInternalProblem({
+                error: "internal_error",
+              })),
+          }),
+        )
+      }))
+)
+
 const ResponsePolicy = HttpRouter.middleware(
   (httpEffect) =>
     Effect.map(httpEffect, (response) =>
@@ -340,7 +426,9 @@ export const DeliveryHttpRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(RelayHttpApi, {
     openapiPath: "/openapi.json",
   }).pipe(
-    Layer.provide(DeliveryHttpHandlers),
+    Layer.provide(
+      Layer.merge(DeliveryHttpHandlers, EventHttpHandlers),
+    ),
     Layer.provide(RequestContractLive),
     Layer.provide(DeliveryAuthorizationLive),
   ),

@@ -12,6 +12,7 @@ import {
   AppConfiguration,
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
+  defaultDestinationConfigurationVersion,
   type DeliveryResilience,
 } from "../src/configuration.ts"
 import {
@@ -68,6 +69,8 @@ const makeM4Layer = (
       AppConfiguration,
       AppConfiguration.of({
         destination,
+        destinationConfigurationVersion:
+          defaultDestinationConfigurationVersion,
         concurrency: { global: 4, perDestination: 2 },
         flow: defaultDeliveryFlow,
         recovery: defaultDeliveryRecovery,

@@ -9,6 +9,7 @@ import {
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServer from "effect/unstable/http/HttpServer"
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
+import { EventIntake } from "../src/eventIntake.ts"
 import { DeliveryOverloaded } from "../src/errors.ts"
 import {
   DeliveryHttpRoutes,
@@ -72,6 +73,7 @@ const makeHandler = (
     }),
     deliver,
     deliverTo: (candidate) => deliver(candidate),
+    enqueueClaimed: () => Effect.void,
     resumeClaimed: () =>
       Effect.die(new Error("not used by this adapter test")),
     loadMetrics: () => Effect.succeed({
@@ -104,12 +106,16 @@ const makeHandler = (
     markReady: Effect.void,
     markNotReady: Effect.void,
   })
+  const eventIntake = EventIntake.of({
+    accept: () => Effect.die(new Error("not used by this adapter test")),
+  })
   return {
     dispose: webHandler.dispose,
     handler: (request: Request) =>
       webHandler.handler(
         request,
         Context.make(DeliverySupervisor, service).pipe(
+          Context.add(EventIntake, eventIntake),
           Context.add(RelayReadiness, readiness),
         ),
       ),

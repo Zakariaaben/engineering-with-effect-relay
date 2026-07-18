@@ -6,6 +6,7 @@ import {
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
   defaultDeliveryResilience,
+  defaultDestinationConfigurationVersion,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
@@ -32,6 +33,7 @@ const makeDurableIntakeStore = (
   Layer.succeed(
     RelayIntakeStore,
     RelayIntakeStore.of({
+      accept: () => Effect.die(new Error("not used by this gate")),
       savePending: (acceptedEvent, deliveryId, destinationId) =>
         Effect.sync(() => {
           const delivery = Delivery.make({
@@ -61,6 +63,8 @@ const makeRuntime = (
             AppConfiguration,
             AppConfiguration.of({
               destination,
+              destinationConfigurationVersion:
+                defaultDestinationConfigurationVersion,
               concurrency: { global: 2, perDestination: 1 },
               flow: defaultDeliveryFlow,
               recovery: defaultDeliveryRecovery,

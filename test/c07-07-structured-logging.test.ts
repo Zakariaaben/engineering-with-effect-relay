@@ -6,6 +6,7 @@ import {
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
   defaultDeliveryResilience,
+  defaultDestinationConfigurationVersion,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
@@ -53,6 +54,8 @@ describe("C07-07 structured delivery logs", () => {
         AppConfiguration,
         AppConfiguration.of({
           destination,
+          destinationConfigurationVersion:
+            defaultDestinationConfigurationVersion,
           concurrency: { global: 2, perDestination: 1 },
           flow: defaultDeliveryFlow,
           recovery: defaultDeliveryRecovery,

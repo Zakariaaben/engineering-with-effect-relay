@@ -33,11 +33,11 @@ import {
 } from "./errors.ts"
 import { sendDelivery } from "./effectSender.ts"
 import { generateDeliveryId } from "./identifiers.ts"
+import { Destination } from "./model.ts"
 import type {
   Delivery,
   DeliveryId,
   DeliveryResult,
-  Destination,
   DestinationId,
   RelayEvent,
 } from "./model.ts"
@@ -107,6 +107,9 @@ export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
     DeliveryResult,
     DeliveryOverloaded | DeliveryRepositoryError
   >
+  readonly enqueueClaimed: (
+    claimed: ClaimedDelivery,
+  ) => Effect.Effect<void, DeliveryRepositoryError>
   readonly activeCount: () => Effect.Effect<number>
   readonly concurrencyMetrics: () => Effect.Effect<DeliveryConcurrencyMetrics>
   readonly loadMetrics: () => Effect.Effect<DeliveryLoadMetrics>
@@ -367,7 +370,7 @@ export const makeDeliverySupervisorLive = (
           ),
       )
 
-    const submitClaimed = Effect.fn("DeliverySupervisor.submitClaimed")(
+    const offerClaimed = Effect.fn("DeliverySupervisor.offerClaimed")(
       function* (
         deliveryId: DeliveryId,
         event: RelayEvent,
@@ -399,9 +402,24 @@ export const makeDeliverySupervisorLive = (
           return yield* overload(destination.id)
         }
 
-        return yield* Deferred.await(result).pipe(
+        return { cancelled, result }
+      },
+    )
+
+    const submitClaimed = Effect.fn("DeliverySupervisor.submitClaimed")(
+      function* (
+        deliveryId: DeliveryId,
+        event: RelayEvent,
+        destination: Destination,
+      ) {
+        const offered = yield* offerClaimed(
+          deliveryId,
+          event,
+          destination,
+        )
+        return yield* Deferred.await(offered.result).pipe(
           Effect.onInterrupt(() =>
-            Deferred.succeed(cancelled, undefined).pipe(
+            Deferred.succeed(offered.cancelled, undefined).pipe(
               Effect.asVoid,
             )
           ),
@@ -465,13 +483,41 @@ export const makeDeliverySupervisorLive = (
     )
     const resumeClaimed = Effect.fn(
       "DeliverySupervisor.resumeClaimed",
-    )((claimed: ClaimedDelivery) =>
-      submitClaimed(
+    )((claimed: ClaimedDelivery) => {
+      const destination = Option.match(claimed.route, {
+        onNone: () => configuration.destination,
+        onSome: (route) => Destination.make({
+          id: route.destinationId,
+          endpoint: route.endpoint,
+          authorization: configuration.destination.authorization,
+        }),
+      })
+      return submitClaimed(
         claimed.delivery.id,
         claimed.event,
-        configuration.destination,
+        destination,
       )
-    )
+    })
+    const enqueueClaimed = Effect.fn(
+      "DeliverySupervisor.enqueueClaimed",
+    )((claimed: ClaimedDelivery) => {
+      const destination = Option.match(claimed.route, {
+        onNone: () => configuration.destination,
+        onSome: (route) => Destination.make({
+          id: route.destinationId,
+          endpoint: route.endpoint,
+          authorization: configuration.destination.authorization,
+        }),
+      })
+      return offerClaimed(
+        claimed.delivery.id,
+        claimed.event,
+        destination,
+      ).pipe(
+        Effect.asVoid,
+        Effect.catchTag("DeliveryOverloaded", () => Effect.void),
+      )
+    })
     const activeCount = Effect.fn(
       "DeliverySupervisor.activeCount",
     )(function* () {
@@ -514,6 +560,7 @@ export const makeDeliverySupervisorLive = (
       concurrencyMetrics,
       deliver,
       deliverTo,
+      enqueueClaimed,
       loadMetrics,
       resumeClaimed,
     })

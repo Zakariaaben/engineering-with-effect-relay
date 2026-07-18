@@ -51,9 +51,55 @@ export const addDeliveryClaims = Effect.gen(function* () {
   `
 })
 
+export const addAtomicIntake = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  yield* sql`
+    ALTER TABLE relay_events
+    ADD COLUMN ingestion_key text,
+    ADD COLUMN request_fingerprint text,
+    ADD COLUMN accepted_at_ms bigint,
+    ADD CONSTRAINT relay_events_intake_complete_check CHECK (
+      (
+        ingestion_key IS NULL
+        AND request_fingerprint IS NULL
+        AND accepted_at_ms IS NULL
+      )
+      OR
+      (
+        ingestion_key IS NOT NULL
+        AND request_fingerprint IS NOT NULL
+        AND accepted_at_ms IS NOT NULL
+        AND request_fingerprint ~ '^[0-9a-f]{64}$'
+        AND accepted_at_ms >= 0
+      )
+    ),
+    ADD CONSTRAINT relay_events_ingestion_key_unique UNIQUE (ingestion_key)
+  `
+
+  yield* sql`
+    ALTER TABLE deliveries
+    ADD COLUMN destination_url text,
+    ADD COLUMN configuration_version integer,
+    ADD CONSTRAINT deliveries_route_snapshot_check CHECK (
+      (
+        destination_url IS NULL
+        AND configuration_version IS NULL
+      )
+      OR
+      (
+        destination_url IS NOT NULL
+        AND configuration_version IS NOT NULL
+        AND configuration_version > 0
+      )
+    )
+  `
+})
+
 export const RelayMigrations = Migrator.fromRecord({
   "0001_create_relay_tables": createRelayTables,
   "0002_add_delivery_claims": addDeliveryClaims,
+  "0003_atomic_intake": addAtomicIntake,
 })
 
 export const RelayMigrationsLive = Layer.effectDiscard(

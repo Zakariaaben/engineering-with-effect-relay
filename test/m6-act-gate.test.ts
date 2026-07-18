@@ -48,6 +48,7 @@ const makePersistenceLayer = (
   const intake = Layer.succeed(
     RelayIntakeStore,
     RelayIntakeStore.of({
+      accept: () => Effect.die(new Error("not used by this gate")),
       savePending: (acceptedEvent, deliveryId, destinationId) =>
         Effect.sync(() => {
           const delivery = Delivery.make({

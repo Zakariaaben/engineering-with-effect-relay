@@ -13,6 +13,7 @@ import {
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
   defaultDeliveryResilience,
+  defaultDestinationConfigurationVersion,
 } from "../src/configuration.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
@@ -70,6 +71,8 @@ describe("C07-09 delivery metrics", () => {
             Layer.succeed(
               AppConfiguration,
               AppConfiguration.of({
+                destinationConfigurationVersion:
+                  defaultDestinationConfigurationVersion,
                 destination: destinationA,
                 concurrency: { global: 2, perDestination: 1 },
                 flow: {

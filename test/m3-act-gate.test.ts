@@ -12,6 +12,7 @@ import {
   defaultDeliveryFlow,
   defaultDeliveryRecovery,
   defaultDeliveryResilience,
+  defaultDestinationConfigurationVersion,
 } from "../src/configuration.ts"
 import {
   DeliverySupervisor,
@@ -47,6 +48,8 @@ const makeSupervisorRuntime = (
     Layer.succeed(
       AppConfiguration,
       AppConfiguration.of({
+        destinationConfigurationVersion:
+          defaultDestinationConfigurationVersion,
         destination: destinationA,
         concurrency,
         flow: defaultDeliveryFlow,

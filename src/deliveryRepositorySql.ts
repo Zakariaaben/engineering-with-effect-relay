@@ -5,8 +5,10 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 import { DeliveryRepositoryError } from "./errors.ts"
 import {
   Delivery,
+  ConfigurationVersion,
   DeliveryId,
   DeliveryResult,
+  DeliveryRouteSnapshot,
   DeliveryState,
   DestinationId,
   EventId,
@@ -64,6 +66,8 @@ export const ClaimedDeliveryRow = Schema.Struct({
   event_type: Schema.Literal("invoice.created"),
   invoice_id: InvoiceId,
   amount_cents: AmountCents,
+  destination_url: Schema.NullOr(Schema.URLFromString),
+  configuration_version: Schema.NullOr(ConfigurationVersion),
 })
 export type ClaimedDeliveryRow = Schema.Schema.Type<
   typeof ClaimedDeliveryRow
@@ -124,6 +128,14 @@ export const rowToClaimedDelivery = (
     invoiceId: row.invoice_id,
     amountCents: row.amount_cents,
   }),
+  route:
+    row.destination_url !== null && row.configuration_version !== null
+      ? Option.some(DeliveryRouteSnapshot.make({
+          destinationId: row.destination_id,
+          endpoint: row.destination_url,
+          configurationVersion: row.configuration_version,
+        }))
+      : Option.none(),
 })
 
 export interface DeliveryCompletionRow {
@@ -334,8 +346,11 @@ export const DeliveryRepositorySql = Layer.effect(
               claimed_deliveries.destination_id,
               relay_events.event_type,
               relay_events.invoice_id,
-              relay_events.amount_cents
+              relay_events.amount_cents,
+              delivery.destination_url,
+              delivery.configuration_version
             FROM claimed_deliveries
+            INNER JOIN deliveries AS delivery USING (delivery_id)
             INNER JOIN relay_events USING (event_id)
             ORDER BY claimed_deliveries.delivery_id
           `,
