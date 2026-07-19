@@ -4,6 +4,7 @@ import {
   Context,
   Duration,
   Effect,
+  Fiber,
   Layer,
   ManagedRuntime,
   Option,
@@ -26,7 +27,7 @@ import { DestinationClient } from "../src/destinationClient.ts"
 import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ClaimGeneration,
-  type DeliveryId,
+  DeliveryId,
   WorkerId,
 } from "../src/model.ts"
 import {
@@ -40,25 +41,34 @@ const workerA = WorkerId.make("wrk-m7-m8-a")
 const workerB = WorkerId.make("wrk-m7-m8-b")
 const leaseDurationMillis = 30_000
 
-const configuration = Layer.succeed(
-  AppConfiguration,
-  AppConfiguration.of({
-    destination,
-    destinationConfigurationVersion:
-      defaultDestinationConfigurationVersion,
-    concurrency: { global: 1, perDestination: 1 },
-    flow: defaultDeliveryFlow,
-    recovery: {
-      ...defaultDeliveryRecovery,
-      claimLeaseDuration: Duration.millis(leaseDurationMillis),
-      claimRenewInterval: Duration.seconds(10),
-    },
-    resilience: {
-      ...defaultDeliveryResilience,
-      maxAttempts: 1,
-    },
-  }),
-)
+interface WorkerConfigurationOptions {
+  readonly concurrency?: { readonly global: number; readonly perDestination: number }
+  readonly flow?: typeof defaultDeliveryFlow
+}
+
+const makeConfiguration = ({
+  concurrency = { global: 1, perDestination: 1 },
+  flow = defaultDeliveryFlow,
+}: WorkerConfigurationOptions = {}) =>
+  Layer.succeed(
+    AppConfiguration,
+    AppConfiguration.of({
+      destination,
+      destinationConfigurationVersion:
+        defaultDestinationConfigurationVersion,
+      concurrency,
+      flow,
+      recovery: {
+        ...defaultDeliveryRecovery,
+        claimLeaseDuration: Duration.millis(leaseDurationMillis),
+        claimRenewInterval: Duration.seconds(10),
+      },
+      resilience: {
+        ...defaultDeliveryResilience,
+        maxAttempts: 1,
+      },
+    }),
+  )
 
 const makeReceiver = (deduplicate: boolean) => {
   const applied = new Set<DeliveryId>()
@@ -90,9 +100,10 @@ const makeWorkerRuntime = (
   intake: Context.Service.Shape<typeof RelayIntakeStore>,
   destinationClient: Context.Service.Shape<typeof DestinationClient>,
   hooks: DeliverySupervisorHooks = {},
+  options: WorkerConfigurationOptions = {},
 ) => {
   const dependencies = Layer.mergeAll(
-    configuration,
+    makeConfiguration(options),
     Layer.succeed(DeliveryRepository, repository),
     Layer.succeed(RelayIntakeStore, intake),
     Layer.succeed(DestinationClient, destinationClient),
@@ -316,6 +327,107 @@ describe("Relay M7/M8 act gate", () => {
       }
     } finally {
       await first.dispose()
+      await persistence.dispose()
+    }
+  })
+
+  it("bounds recovered claims before they become owned delivery fibers", async () => {
+    const persistence = ManagedRuntime.make(RelayPersistenceMemory)
+    const persistenceContext = await persistence.context()
+    const repository = Context.get(persistenceContext, DeliveryRepository)
+    const intake = Context.get(persistenceContext, RelayIntakeStore)
+    const firstStarted = makeGate<void>()
+    const secondStarted = makeGate<void>()
+    const firstRelease = makeGate<void>()
+    const secondRelease = makeGate<void>()
+    const secondQueued = makeGate<void>()
+    let attempts = 0
+    const receiver = DestinationClient.of({
+      post: () =>
+        Effect.gen(function* () {
+          const index = attempts
+          attempts += 1
+          const ready = [firstStarted, secondStarted][index]
+          const gate = [firstRelease, secondRelease][index]
+          if (ready === undefined || gate === undefined) {
+            return yield* Effect.die(new Error("unexpected delivery attempt"))
+          }
+          ready.resolve(undefined)
+          yield* Effect.promise(() => gate.promise)
+          return { status: 202 }
+        }),
+    })
+    const runtime = makeWorkerRuntime(
+      workerA,
+      repository,
+      intake,
+      receiver,
+      {
+        afterClaimQueued: (deliveryId) =>
+          deliveryId === DeliveryId.make("dlv-recovered-2")
+            ? Effect.sync(() => secondQueued.resolve(undefined))
+            : Effect.void,
+      },
+      {
+        concurrency: { global: 1, perDestination: 1 },
+        flow: { ...defaultDeliveryFlow, deliveryRequestsCapacity: 1 },
+      },
+    )
+
+    try {
+      const observation = await runtime.runPromise(
+        Effect.gen(function* () {
+          const supervisor = yield* DeliverySupervisor
+          const claimed = yield* Effect.forEach(
+            ["dlv-recovered-1", "dlv-recovered-2"],
+            (id) => intake.savePending(
+              event,
+              DeliveryId.make(id),
+              destination.id,
+              { ownerId: workerA, leaseDurationMillis },
+            ),
+          )
+          const [firstClaim, secondClaim] = claimed
+          if (firstClaim === undefined || secondClaim === undefined) {
+            return yield* Effect.die(new Error("expected two recovered claims"))
+          }
+          const first = yield* supervisor.resumeClaimed(firstClaim).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          )
+
+          yield* Effect.promise(() => firstStarted.promise)
+          const second = yield* supervisor.resumeClaimed(secondClaim).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* Effect.promise(() => secondQueued.promise)
+          const saturated = yield* supervisor.activeCount()
+          const attemptsBeforeRelease = attempts
+
+          firstRelease.resolve(undefined)
+          yield* Effect.promise(() => secondStarted.promise)
+          const afterOneCompletes = yield* supervisor.activeCount()
+
+          secondRelease.resolve(undefined)
+          const results = yield* Effect.all([Fiber.join(first), Fiber.join(second)])
+
+          return {
+            afterOneCompletes,
+            attemptsBeforeRelease,
+            results,
+            saturated,
+          }
+        }),
+      )
+
+      expect(observation.saturated).toBe(1)
+      expect(observation.attemptsBeforeRelease).toBe(1)
+      expect(observation.afterOneCompletes).toBe(1)
+      expect(observation.results.map(({ _tag }) => _tag)).toEqual([
+        "Delivered",
+        "Delivered",
+      ])
+    } finally {
+      await runtime.dispose()
       await persistence.dispose()
     }
   })
