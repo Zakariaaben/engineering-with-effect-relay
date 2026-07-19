@@ -16,13 +16,11 @@ import {
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
 import {
-  type DeliveryConcurrencyMetrics,
   type DeliveryLoadMetrics,
+  type DeliveryConcurrencyMetrics,
   makeDeliveryAdmission,
 } from "./deliveryAdmission.ts"
-import {
-  type AttemptObservation,
-} from "./deliveryEngine.ts"
+import type { AttemptObservation } from "./deliveryEngine.ts"
 import { makeDeliveryMetrics } from "./deliveryMetrics.ts"
 import { DeliveryEvents } from "./deliveryEvents.ts"
 import { DestinationClient } from "./destinationClient.ts"
@@ -71,6 +69,9 @@ export interface DeliverySupervisorHooks {
   readonly afterIntakeCommit?: (
     delivery: Delivery,
   ) => Effect.Effect<void>
+  readonly afterClaimQueued?: (
+    deliveryId: DeliveryId,
+  ) => Effect.Effect<void>
   readonly afterAttemptObserved?: (
     deliveryId: DeliveryId,
     attempt: AttemptObservation,
@@ -81,7 +82,7 @@ export interface DeliverySupervisorHooks {
   ) => Effect.Effect<void>
 }
 
-export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
+export interface DeliverySupervisorService {
   readonly deliver: (
     candidate: unknown,
   ) => Effect.Effect<DeliveryResult, DeliveryFailure>
@@ -101,7 +102,25 @@ export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
   readonly activeCount: () => Effect.Effect<number>
   readonly concurrencyMetrics: () => Effect.Effect<DeliveryConcurrencyMetrics>
   readonly loadMetrics: () => Effect.Effect<DeliveryLoadMetrics>
-}>()("Relay/DeliverySupervisor") {}
+}
+
+export class DeliverySupervisor extends Context.Service<
+  DeliverySupervisor,
+  DeliverySupervisorService
+>()("Relay/DeliverySupervisor") {}
+
+const destinationFor = (
+  claimed: ClaimedDelivery,
+  fallback: Destination,
+): Destination =>
+  Option.match(claimed.route, {
+    onNone: () => fallback,
+    onSome: (route) => Destination.make({
+      id: route.destinationId,
+      endpoint: route.endpoint,
+      authorization: fallback.authorization,
+    }),
+  })
 
 export const makeDeliverySupervisorLive = (
   hooks: DeliverySupervisorHooks = {},
@@ -217,6 +236,10 @@ export const makeDeliverySupervisorLive = (
           )
         }
 
+        if (hooks.afterClaimQueued !== undefined) {
+          yield* hooks.afterClaimQueued(claimed.delivery.id)
+        }
+
         return { cancelled, result }
       },
     )
@@ -294,14 +317,7 @@ export const makeDeliverySupervisorLive = (
     const resumeClaimed = Effect.fn(
       "DeliverySupervisor.resumeClaimed",
     )((claimed: ClaimedDelivery) => {
-      const destination = Option.match(claimed.route, {
-        onNone: () => configuration.destination,
-        onSome: (route) => Destination.make({
-          id: route.destinationId,
-          endpoint: route.endpoint,
-          authorization: configuration.destination.authorization,
-        }),
-      })
+      const destination = destinationFor(claimed, configuration.destination)
       return submitClaimed(
         claimed,
         destination,
@@ -310,14 +326,7 @@ export const makeDeliverySupervisorLive = (
     const enqueueClaimed = Effect.fn(
       "DeliverySupervisor.enqueueClaimed",
     )((claimed: ClaimedDelivery) => {
-      const destination = Option.match(claimed.route, {
-        onNone: () => configuration.destination,
-        onSome: (route) => Destination.make({
-          id: route.destinationId,
-          endpoint: route.endpoint,
-          authorization: configuration.destination.authorization,
-        }),
-      })
+      const destination = destinationFor(claimed, configuration.destination)
       return offerClaimed(
         claimed,
         destination,
