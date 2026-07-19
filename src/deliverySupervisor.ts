@@ -10,6 +10,7 @@ import {
   Option,
   Queue,
   Random,
+  Semaphore,
   Stream,
   Tracer,
 } from "effect"
@@ -121,6 +122,9 @@ export const makeDeliverySupervisorLive = (
       ),
       Queue.shutdown,
     )
+    const dispatchPermits = yield* Semaphore.make(
+      configuration.flow.deliveryRequestsCapacity,
+    )
     const metrics = makeDeliveryMetrics()
     yield* metrics.initialize({
       activeAttempts: 0,
@@ -146,19 +150,27 @@ export const makeDeliverySupervisorLive = (
     })
 
     const dispatchJob = Effect.fn("DeliverySupervisor.dispatchJob")(
-      function* (job: DeliveryJob) {
-        const task = Option.match(job.parentSpan, {
-          onNone: () => processJob(job),
-          onSome: (parentSpan) =>
-            processJob(job).pipe(
-              Effect.withParentSpan(parentSpan),
-            ),
-        })
-        yield* FiberSet.run(
-          deliveries,
-          task,
+      (job: DeliveryJob) => Effect.uninterruptibleMask((restore) =>
+        restore(Semaphore.take(dispatchPermits, 1)).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const task = Option.match(job.parentSpan, {
+                onNone: () => processJob(job),
+                onSome: (parentSpan) =>
+                  processJob(job).pipe(
+                    Effect.withParentSpan(parentSpan),
+                  ),
+              })
+              yield* FiberSet.run(
+                deliveries,
+                task.pipe(
+                  Effect.ensuring(Semaphore.release(dispatchPermits, 1)),
+                ),
+              )
+            }),
+          ),
         )
-      },
+      ),
     )
 
     yield* Stream.fromQueue(requests).pipe(
