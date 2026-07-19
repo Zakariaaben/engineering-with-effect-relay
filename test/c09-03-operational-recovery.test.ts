@@ -27,7 +27,7 @@ import {
   RelayHttpApi,
   UnauthorizedProblem,
 } from "../src/httpServer.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ClaimGeneration,
   ConfigurationVersion,

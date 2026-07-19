@@ -15,7 +15,7 @@ import {
   makeDeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
-import { DeliveryRepositoryMemory } from "../src/layers.ts"
+import { DeliveryRepositoryMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   Delivery,
   ClaimGeneration,

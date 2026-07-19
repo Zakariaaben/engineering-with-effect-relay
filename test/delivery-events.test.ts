@@ -10,7 +10,7 @@ import {
 } from "effect"
 import { DeliveryEvents } from "../src/deliveryEvents.ts"
 import { DeliverySupervisor } from "../src/deliverySupervisor.ts"
-import { makeRelayApplicationLayer } from "../src/layers.ts"
+import { makeRelayApplicationLayer } from "../src/app/layer.ts"
 import {
   DeliveryId,
   DeliveryResult,
@@ -66,7 +66,10 @@ describe("C06-06 delivery event boundary", () => {
       }
     }).pipe(
       Effect.provide(
-        makeRelayApplicationLayer(httpClientLayer, configuration()),
+        makeRelayApplicationLayer({
+          httpClient: httpClientLayer,
+          configProvider: configuration(),
+        }),
       ),
     )
 
@@ -124,7 +127,10 @@ describe("C06-07 delivery event backpressure", () => {
       return yield* Ref.get(received)
     }).pipe(
       Effect.provide(
-        makeRelayApplicationLayer(httpClientLayer, configuration(2)),
+        makeRelayApplicationLayer({
+          httpClient: httpClientLayer,
+          configProvider: configuration(2),
+        }),
       ),
     )
 

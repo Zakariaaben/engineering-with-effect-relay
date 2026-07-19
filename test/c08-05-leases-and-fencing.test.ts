@@ -23,7 +23,7 @@ import {
 } from "../src/deliverySupervisor.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
 import { ClaimLostError } from "../src/errors.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ClaimGeneration,
   DeliveryResult,

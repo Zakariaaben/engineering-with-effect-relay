@@ -45,8 +45,8 @@ import {
   DeliveryOverloaded,
   InvalidEventError,
 } from "../src/errors.ts"
-import { makeRelayIntakeStoreSql } from "../src/intakeStoreSql.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { makeRelayIntakeStoreSql } from "../src/adapters/postgres/intakeStore.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ClaimGeneration,
   ConfigurationVersion,

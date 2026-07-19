@@ -10,43 +10,42 @@ import {
   Option,
   Queue,
   Random,
-  Ref,
-  Semaphore,
   Stream,
-  SynchronizedRef,
   Tracer,
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
 import {
+  type DeliveryConcurrencyMetrics,
+  type DeliveryLoadMetrics,
+  makeDeliveryAdmission,
+} from "./deliveryAdmission.ts"
+import {
   type AttemptObservation,
-  observeDeliveryAttempt,
-  runDeliveryWithRetry,
 } from "./deliveryEngine.ts"
 import { makeDeliveryMetrics } from "./deliveryMetrics.ts"
 import { DeliveryEvents } from "./deliveryEvents.ts"
 import { DestinationClient } from "./destinationClient.ts"
 import {
+  type DeliveryJob,
+  makeDeliveryWorker,
+} from "./deliveryWorker.ts"
+import {
   type ClaimLostError,
   DeliveryIdentityError,
-  DeliveryOverloaded,
+  type DeliveryOverloaded,
   type DeliveryRepositoryError,
   type InvalidEventError,
   type RelayIntakeStoreError,
 } from "./errors.ts"
-import { sendDelivery } from "./effectSender.ts"
 import { generateDeliveryId } from "./identifiers.ts"
 import { Destination } from "./model.ts"
 import type {
-  AttemptTraceCorrelation,
   Delivery,
   DeliveryAttempt,
-  DeliveryClaim,
   DeliveryId,
   DeliveryResult,
-  DestinationId,
   RelayEvent,
 } from "./model.ts"
-import { makeDeliveryAttemptRecord } from "./model.ts"
 import {
   DeliveryRepository,
   RelayIntakeStore,
@@ -67,22 +66,6 @@ type DeliveryFailure =
   | DeliveryClaimFailure
   | RelayIntakeStoreError
 
-interface DeliveryJob {
-  readonly cancelled: Deferred.Deferred<void>
-  readonly claim: DeliveryClaim
-  readonly clock: Clock.Clock
-  readonly deliveryId: DeliveryId
-  readonly destination: Destination
-  readonly event: RelayEvent
-  readonly nextAttemptOrdinal: number
-  readonly parentSpan: Option.Option<Tracer.AnySpan>
-  readonly random: Context.Service.Shape<typeof Random.Random>
-  readonly result: Deferred.Deferred<
-    DeliveryResult,
-    DeliveryClaimFailure
-  >
-}
-
 export interface DeliverySupervisorHooks {
   readonly afterIntakeCommit?: (
     delivery: Delivery,
@@ -95,23 +78,6 @@ export interface DeliverySupervisorHooks {
     deliveryId: DeliveryId,
     attempt: DeliveryAttempt,
   ) => Effect.Effect<void>
-}
-
-export interface DeliveryConcurrencyMetrics {
-  readonly globalActive: number
-  readonly activeByDestination: ReadonlyMap<DestinationId, number>
-}
-
-export interface DeliveryLoadMetrics extends DeliveryConcurrencyMetrics {
-  readonly activeDeliveries: number
-  readonly admittedByDestination: ReadonlyMap<DestinationId, number>
-  readonly admittedDeliveries: number
-  readonly globalConcurrencyLimit: number
-  readonly perDestinationAdmissionCapacity: number
-  readonly perDestinationConcurrencyLimit: number
-  readonly rejected: number
-  readonly requestQueueCapacity: number
-  readonly requestQueueDepth: number
 }
 
 export class DeliverySupervisor extends Context.Service<DeliverySupervisor, {
@@ -155,27 +121,6 @@ export const makeDeliverySupervisorLive = (
       ),
       Queue.shutdown,
     )
-    const globalAdmission = yield* Semaphore.make(
-      configuration.flow.deliveryRequestsCapacity,
-    )
-    const destinationAdmissions = yield* SynchronizedRef.make(
-      new Map<DestinationId, Semaphore.Semaphore>(),
-    )
-    const admitted = yield* Ref.make({
-      total: 0,
-      byDestination: new Map<DestinationId, number>(),
-    })
-    const rejected = yield* Ref.make(0)
-    const globalCapacity = yield* Semaphore.make(
-      configuration.concurrency.global,
-    )
-    const destinationCapacities = yield* SynchronizedRef.make(
-      new Map<DestinationId, Semaphore.Semaphore>(),
-    )
-    const active = yield* Ref.make<DeliveryConcurrencyMetrics>({
-      globalActive: 0,
-      activeByDestination: new Map(),
-    })
     const metrics = makeDeliveryMetrics()
     yield* metrics.initialize({
       activeAttempts: 0,
@@ -185,301 +130,20 @@ export const makeDeliverySupervisorLive = (
       requestQueueDepth: 0,
       requestQueueCapacity: configuration.flow.deliveryRequestsCapacity,
     })
+    const admission = yield* makeDeliveryAdmission({
+      configuration,
+      metrics,
+    })
 
-    const capacityFor = Effect.fn("DeliverySupervisor.capacityFor")(
-      function* (destinationId: DestinationId) {
-        return yield* SynchronizedRef.modifyEffect(
-          destinationCapacities,
-          (capacities) => {
-            const existing = capacities.get(destinationId)
-            if (existing !== undefined) {
-              return Effect.succeed([existing, capacities] as const)
-            }
-
-            return Semaphore.make(
-              configuration.concurrency.perDestination,
-            ).pipe(
-              Effect.map((created) => {
-                const updated = new Map(capacities)
-                updated.set(destinationId, created)
-                return [created, updated] as const
-              }),
-            )
-          },
-        )
-      },
-    )
-
-    const admissionFor = Effect.fn("DeliverySupervisor.admissionFor")(
-      function* (destinationId: DestinationId) {
-        return yield* SynchronizedRef.modifyEffect(
-          destinationAdmissions,
-          (capacities) => {
-            const existing = capacities.get(destinationId)
-            if (existing !== undefined) {
-              return Effect.succeed([existing, capacities] as const)
-            }
-
-            return Semaphore.make(
-              configuration.flow
-                .deliveryRequestsPerDestinationCapacity,
-            ).pipe(
-              Effect.map((created) => {
-                const updated = new Map(capacities)
-                updated.set(destinationId, created)
-                return [created, updated] as const
-              }),
-            )
-          },
-        )
-      },
-    )
-
-    const adjustActive = Effect.fn("DeliverySupervisor.adjustActive")(
-      (destinationId: DestinationId, adjustment: 1 | -1) =>
-        Ref.updateAndGet(active, (current) => {
-          const activeByDestination = new Map(
-            current.activeByDestination,
-          )
-          const destinationActive =
-            (activeByDestination.get(destinationId) ?? 0) + adjustment
-
-          if (destinationActive === 0) {
-            activeByDestination.delete(destinationId)
-          } else {
-            activeByDestination.set(destinationId, destinationActive)
-          }
-
-          return {
-            globalActive: current.globalActive + adjustment,
-            activeByDestination,
-          }
-        }).pipe(
-          Effect.tap((current) =>
-            metrics.setActiveAttempts(current.globalActive)
-          ),
-        ),
-    )
-
-    const trackActive = <A, E, R>(
-      destinationId: DestinationId,
-      task: Effect.Effect<A, E, R>,
-    ) =>
-      Effect.acquireUseRelease(
-        adjustActive(destinationId, 1),
-        () => task,
-        () => adjustActive(destinationId, -1),
-      )
-
-    const withCapacity = Effect.fn("DeliverySupervisor.withCapacity")(
-      function* <A, E, R>(
-        destinationId: DestinationId,
-        task: Effect.Effect<A, E, R>,
-      ) {
-        const destinationCapacity = yield* capacityFor(destinationId)
-
-        return yield* destinationCapacity.withPermit(
-          globalCapacity.withPermit(
-            trackActive(destinationId, task),
-          ),
-        )
-      },
-    )
-
-    const executeDelivery = Effect.fn("DeliverySupervisor.executeDelivery")(
-      function* (
-        deliveryId: DeliveryId,
-        event: RelayEvent,
-        destination: Destination,
-        claim: Ref.Ref<DeliveryClaim>,
-        firstAttemptOrdinal: number,
-        trace: AttemptTraceCorrelation,
-      ) {
-        const recordAttempt = (attempt: DeliveryAttempt) =>
-          Ref.get(claim).pipe(
-            Effect.map((current) =>
-              makeDeliveryAttemptRecord(
-                deliveryId,
-                current,
-                attempt,
-                trace,
-              )
-            ),
-            Effect.flatMap(repository.recordAttempt),
-            Effect.tap(() =>
-              hooks.afterAttemptRecorded?.(
-                deliveryId,
-                attempt,
-              ) ?? Effect.void
-            ),
-            Effect.andThen(metrics.recordAttempt(attempt)),
-          )
-        const task = runDeliveryWithRetry(
-          deliveryId,
-          destination.id,
-          configuration.resilience,
-          (ordinal, remaining) =>
-            withCapacity(
-              destination.id,
-              observeDeliveryAttempt(
-                ordinal,
-                destination.id,
-                Duration.min(
-                  configuration.resilience.attemptTimeout,
-                  remaining,
-                ),
-                sendDelivery(
-                  deliveryId,
-                  event,
-                  destination,
-                ).pipe(
-                  Effect.provideService(
-                    DestinationClient,
-                    destinationClient,
-                  ),
-                ),
-              ).pipe(
-                Effect.tap((attempt) =>
-                  hooks.afterAttemptObserved?.(
-                    deliveryId,
-                    attempt,
-                  ) ?? Effect.void
-                ),
-              ),
-            ),
-          recordAttempt,
-          firstAttemptOrdinal,
-        )
-        return yield* task.pipe(
-          Effect.annotateLogs({
-            "relay.event_id": event.id,
-            "relay.delivery_id": deliveryId,
-            "relay.destination_id": destination.id,
-          }),
-          Effect.tap(deliveryEvents.publish),
-        )
-      },
-    )
-
-    const processJob = Effect.fn("DeliverySupervisor.processJob")(
-      function* (job: DeliveryJob) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.event_id": job.event.id,
-          "relay.delivery_id": job.deliveryId,
-          "relay.destination_id": job.destination.id,
-          "relay.claim_owner": job.claim.ownerId,
-          "relay.claim_generation": job.claim.generation,
-        })
-        const span = yield* Effect.currentSpan
-        const trace =
-          /^(?!0{32}$)[0-9a-f]{32}$/.test(span.traceId) &&
-            /^(?!0{16}$)[0-9a-f]{16}$/.test(span.spanId)
-            ? { traceId: span.traceId, spanId: span.spanId }
-            : { traceId: null, spanId: null }
-        const wasCancelled = yield* Deferred.isDone(job.cancelled)
-        const claim = yield* Ref.make(job.claim)
-        const execution =
-          wasCancelled
-            ? Effect.interrupt
-            : Effect.raceFirst(
-                executeDelivery(
-                  job.deliveryId,
-                  job.event,
-                  job.destination,
-                  claim,
-                  job.nextAttemptOrdinal,
-                  trace,
-                ).pipe(
-                  Effect.provideService(Clock.Clock, job.clock),
-                  Effect.provideService(Random.Random, job.random),
-                ),
-                Deferred.await(job.cancelled).pipe(
-                  Effect.andThen(Effect.interrupt),
-                ),
-              )
-        const renewalFailed = yield* Deferred.make<
-          never,
-          DeliveryClaimFailure
-        >()
-        const renew = Effect.gen(function* () {
-          const current = yield* Ref.get(claim)
-          const renewed = yield* repository.renewClaim(
-            job.deliveryId,
-            current,
-            Duration.toMillis(
-              configuration.recovery.claimLeaseDuration,
-            ),
-          )
-          yield* Ref.set(claim, renewed)
-        })
-        const withLease = Effect.scoped(
-          Effect.gen(function* () {
-            yield* renew
-            yield* Effect.sleep(
-              configuration.recovery.claimRenewInterval,
-            ).pipe(
-              Effect.andThen(renew),
-              Effect.forever,
-              Effect.catchCause((cause) =>
-                Deferred.failCause(renewalFailed, cause).pipe(
-                  Effect.asVoid,
-                )
-              ),
-              Effect.provideService(Clock.Clock, job.clock),
-              Effect.forkScoped,
-            )
-
-            return yield* Effect.raceFirst(
-              execution,
-              Deferred.await(renewalFailed),
-            )
-          }),
-        ).pipe(
-          Effect.tap((result) =>
-            result._tag === "ProtocolFailure" ||
-              result._tag === "Exhausted"
-              ? Effect.all([
-                  metrics.recordDeadLetter(
-                    result._tag === "ProtocolFailure"
-                      ? "ProviderProtocolFailure"
-                      : "RetryBudgetExhausted",
-                  ),
-                  Effect.logWarning("delivery.dead_lettered").pipe(
-                    Effect.annotateLogs({
-                      "relay.dead_letter_reason":
-                        result._tag === "ProtocolFailure"
-                          ? "ProviderProtocolFailure"
-                          : "RetryBudgetExhausted",
-                      "relay.attempt_count": result.attempts.length,
-                    }),
-                  ),
-                ], { discard: true })
-              : Effect.void
-          ),
-          Effect.tapErrorTag(
-            "ClaimLostError",
-            (error) => metrics.recordFencingRejection(error.operation),
-          ),
-          Effect.catchCause((cause) =>
-            Ref.get(claim).pipe(
-              Effect.flatMap((current) =>
-                repository.releaseClaim(job.deliveryId, current)
-              ),
-              Effect.ignore,
-              Effect.andThen(Effect.failCause(cause)),
-            ),
-          ),
-          Effect.provideService(Clock.Clock, job.clock),
-          Effect.annotateLogs({
-            "relay.claim_owner": job.claim.ownerId,
-            "relay.claim_generation": job.claim.generation,
-          }),
-        )
-        const exit = yield* Effect.exit(withLease)
-
-        yield* Deferred.done(job.result, exit)
-      },
-    )
+    const processJob = makeDeliveryWorker({
+      configuration,
+      destinationClient,
+      events: deliveryEvents,
+      hooks,
+      metrics,
+      repository,
+      withCapacity: admission.withCapacity,
+    })
 
     const dispatchJob = Effect.fn("DeliverySupervisor.dispatchJob")(
       function* (job: DeliveryJob) {
@@ -500,91 +164,6 @@ export const makeDeliverySupervisorLive = (
     yield* Stream.fromQueue(requests).pipe(
       Stream.runForEach(dispatchJob),
       Effect.forkScoped,
-    )
-
-    const overload = Effect.fn("DeliverySupervisor.overload")(
-      (
-        destinationId: DestinationId,
-        limit: "GlobalAdmission" | "DestinationAdmission",
-      ) =>
-        Effect.all([
-          Ref.update(rejected, (count) => count + 1),
-          metrics.recordAdmissionRejection,
-        ], { discard: true }).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new DeliveryOverloaded({
-                admissionCapacity: limit === "GlobalAdmission"
-                  ? configuration.flow.deliveryRequestsCapacity
-                  : configuration.flow
-                    .deliveryRequestsPerDestinationCapacity,
-                destinationId,
-                limit,
-              }),
-            ),
-          ),
-        ),
-    )
-
-    const adjustAdmitted = (
-      destinationId: DestinationId,
-      adjustment: 1 | -1,
-    ) =>
-      Ref.updateAndGet(admitted, (current) => {
-        const byDestination = new Map(current.byDestination)
-        const destinationTotal =
-          (byDestination.get(destinationId) ?? 0) + adjustment
-
-        if (destinationTotal === 0) {
-          byDestination.delete(destinationId)
-        } else {
-          byDestination.set(destinationId, destinationTotal)
-        }
-
-        return {
-          total: current.total + adjustment,
-          byDestination,
-        }
-      }).pipe(
-        Effect.tap((current) =>
-          metrics.setAdmittedDeliveries(current.total)
-        ),
-      )
-
-    const trackAdmitted = <A, E, R>(
-      destinationId: DestinationId,
-      task: Effect.Effect<A, E, R>,
-    ) =>
-      Effect.acquireUseRelease(
-        adjustAdmitted(destinationId, 1),
-        () => task,
-        () => adjustAdmitted(destinationId, -1),
-      )
-
-    const admit = Effect.fn("DeliverySupervisor.admit")(
-      function* <A, E, R>(
-        destinationId: DestinationId,
-        task: Effect.Effect<A, E, R>,
-      ) {
-        const destinationAdmission = yield* admissionFor(destinationId)
-        const acceptedByDestination = yield*
-          destinationAdmission.withPermitsIfAvailable(1)(
-            globalAdmission.withPermitsIfAvailable(1)(
-              trackAdmitted(destinationId, task),
-            ),
-          )
-
-        if (Option.isNone(acceptedByDestination)) {
-          return yield* overload(
-            destinationId,
-            "DestinationAdmission",
-          )
-        }
-
-        return Option.isSome(acceptedByDestination.value)
-          ? acceptedByDestination.value.value
-          : yield* overload(destinationId, "GlobalAdmission")
-      },
     )
 
     const offerClaimed = Effect.fn("DeliverySupervisor.offerClaimed")(
@@ -620,7 +199,10 @@ export const makeDeliverySupervisorLive = (
             claimed.delivery.id,
             claimed.claim,
           )
-          return yield* overload(destination.id, "GlobalAdmission")
+          return yield* admission.reject(
+            destination.id,
+            "GlobalAdmission",
+          )
         }
 
         return { cancelled, result }
@@ -648,7 +230,7 @@ export const makeDeliverySupervisorLive = (
 
     const deliverTo = Effect.fn("DeliverySupervisor.deliverTo")(
       function* (candidate: unknown, destination: Destination) {
-        return yield* admit(
+        return yield* admission.admit(
           destination.id,
           Effect.gen(function* () {
             const event = yield* decodeIncomingEvent(candidate)
@@ -739,29 +321,14 @@ export const makeDeliverySupervisorLive = (
     })
     const concurrencyMetrics = Effect.fn(
       "DeliverySupervisor.concurrencyMetrics",
-    )(function* () {
-      return yield* Ref.get(active)
-    })
+    )(() => admission.concurrencyMetrics)
     const loadMetrics = Effect.fn(
       "DeliverySupervisor.loadMetrics",
     )(function* () {
-      const concurrency = yield* Ref.get(active)
-      const admission = yield* Ref.get(admitted)
-      const snapshot = {
-        ...concurrency,
+      const snapshot = yield* admission.loadMetrics({
         activeDeliveries: yield* FiberSet.size(deliveries),
-        admittedByDestination: admission.byDestination,
-        admittedDeliveries: admission.total,
-        globalConcurrencyLimit: configuration.concurrency.global,
-        perDestinationAdmissionCapacity:
-          configuration.flow.deliveryRequestsPerDestinationCapacity,
-        perDestinationConcurrencyLimit:
-          configuration.concurrency.perDestination,
-        rejected: yield* Ref.get(rejected),
-        requestQueueCapacity:
-          configuration.flow.deliveryRequestsCapacity,
         requestQueueDepth: yield* Queue.size(requests),
-      }
+      })
       yield* metrics.setSaturation({
         activeAttempts: snapshot.globalActive,
         activeAttemptLimit: snapshot.globalConcurrencyLimit,

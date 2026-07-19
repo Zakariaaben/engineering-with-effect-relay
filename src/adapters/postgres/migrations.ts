@@ -314,7 +314,7 @@ export const RelayMigrations = Migrator.fromRecord({
   "0006_operational_termination": addOperationalTermination,
 })
 
-export const RelayMigrationsLive = Layer.effectDiscard(
+export const PostgresMigrationsLive = Layer.effectDiscard(
   Migrator.make({})({
     loader: RelayMigrations,
     table: "relay_migrations",

@@ -11,7 +11,7 @@ import {
   type Response as AiResponse,
 } from "effect/unstable/ai"
 import { IncidentAnalysisModelLive } from "../src/incidentAnalyst.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
   event,

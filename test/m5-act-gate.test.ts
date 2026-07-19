@@ -18,10 +18,10 @@ import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
   DeliverySupervisor,
   DeliverySupervisorLive,
-  type DeliveryLoadMetrics,
 } from "../src/deliverySupervisor.ts"
+import type { DeliveryLoadMetrics } from "../src/deliveryAdmission.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
-import { RelayIntakeStoreMemory } from "../src/layers.ts"
+import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import { WorkerId } from "../src/model.ts"
 import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"
 import { destination, event, makeGate } from "./fixtures.ts"

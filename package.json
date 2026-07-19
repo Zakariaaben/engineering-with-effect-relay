@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "bun run src/main.node.ts",
     "validate": "tsc --noEmit && bun test"
   },
   "dependencies": {

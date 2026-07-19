@@ -7,7 +7,8 @@ import {
   DeadLetterDestinationMismatchError,
   DeadLetterRecoveryError,
   DeliveryRepositoryError,
-} from "./errors.ts"
+} from "../../errors.ts"
+import { deliveryStateFromResult } from "../../deliveryPolicy.ts"
 import {
   AmountCents,
   ClaimGeneration,
@@ -30,11 +31,11 @@ import {
   type DeliveryAttemptRecord as DeliveryAttemptRecordValue,
   type DeliveryClaim as DeliveryClaimValue,
   type DeliveryResult as DeliveryResultValue,
-} from "./model.ts"
+} from "../../model.ts"
 import {
   DeliveryRepository,
   type ClaimedDelivery,
-} from "./services.ts"
+} from "../../services.ts"
 
 const DeliveryRowFields = {
   delivery_id: DeliveryId,
@@ -279,30 +280,37 @@ export const deliveryCompletionRow = (
     claim_owner: claim.ownerId,
     claim_generation: claim.generation,
   }
-  return DeliveryResult.$match(result, {
-    Delivered: ({ status }): DeliveryCompletionRow => ({
+  const state = deliveryStateFromResult(result)
+  return DeliveryState.match<DeliveryCompletionRow>(state, {
+    Pending: () => ({
+      ...base,
+      state: "Pending",
+      status: null,
+      dead_letter_reason: null,
+    }),
+    Delivered: ({ status }) => ({
       ...base,
       state: "Delivered",
       status,
       dead_letter_reason: null,
     }),
-    Rejected: ({ status }): DeliveryCompletionRow => ({
+    Rejected: ({ status }) => ({
       ...base,
       state: "Rejected",
       status,
       dead_letter_reason: null,
     }),
-    ProtocolFailure: (): DeliveryCompletionRow => ({
+    DeadLettered: ({ reason }) => ({
       ...base,
       state: "DeadLettered",
       status: null,
-      dead_letter_reason: "ProviderProtocolFailure",
+      dead_letter_reason: reason,
     }),
-    Exhausted: (): DeliveryCompletionRow => ({
+    Terminated: () => ({
       ...base,
-      state: "DeadLettered",
+      state: "Pending",
       status: null,
-      dead_letter_reason: "RetryBudgetExhausted",
+      dead_letter_reason: null,
     }),
   })
 }

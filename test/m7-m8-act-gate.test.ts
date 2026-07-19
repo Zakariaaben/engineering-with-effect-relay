@@ -23,7 +23,7 @@ import {
   makeDeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ClaimGeneration,
   type DeliveryId,

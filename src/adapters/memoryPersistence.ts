@@ -1,44 +1,20 @@
-import { NodeCrypto } from "@effect/platform-node"
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import {
   Clock,
-  ConfigProvider,
   Effect,
   Layer,
   Option,
 } from "effect"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import {
-  DestinationClientLive,
-} from "./destinationClient.ts"
-import { DeliveryEventsLive } from "./deliveryEvents.ts"
-import { DeliveryOperationsLive } from "./deliveryOperations.ts"
-import {
-  DeliveryRepositorySql,
-  PostgresLive,
-} from "./deliveryRepositorySql.ts"
-import { DeliverySupervisorLive } from "./deliverySupervisor.ts"
-import { EventIntakeLive } from "./eventIntake.ts"
+  deliveryStateFromResult,
+  terminalStateFromAttempt,
+} from "../deliveryPolicy.ts"
 import {
   ClaimLostError,
   DeadLetterDestinationMismatchError,
   DeadLetterRecoveryError,
   DeliveryRepositoryError,
   IngestionConflictError,
-} from "./errors.ts"
-import {
-  DeliveryHttpRoutes,
-  IntakeAuthorizationLive,
-  OperationsAuthorizationLive,
-} from "./httpServer.ts"
-import {
-  DeliveryAnalystLive,
-  IncidentAnalysisAudit,
-  IncidentAnalysisAuditMemory,
-  IncidentAnalysisModel,
-  IncidentAnalysisModelUnavailable,
-} from "./incidentAnalyst.ts"
+} from "../errors.ts"
 import {
   Delivery,
   ClaimGeneration,
@@ -54,42 +30,14 @@ import {
   type RelayEvent,
   type RequestFingerprint,
   type WorkerId,
-} from "./model.ts"
-import { ReconcilerLive } from "./reconciler.ts"
-import { RelayIntakeStoreSql } from "./intakeStoreSql.ts"
-import { RelayMigrationsLive } from "./migrations.ts"
+} from "../model.ts"
 import {
   DeliveryRepository,
   IntakeDecision,
   type IntakeDecisionFields,
   type IntakeRecord,
   RelayIntakeStore,
-} from "./services.ts"
-import { AppConfigurationLive } from "./configuration.ts"
-import {
-  RelayReadiness,
-  RelayReadinessLive,
-} from "./readiness.ts"
-import {
-  WorkerIdentity,
-  WorkerIdentityLive,
-} from "./workerIdentity.ts"
-
-const stateFromResult = (
-  result: DeliveryResult,
-): Delivery["state"] =>
-  DeliveryResult.$match(result, {
-    Delivered: ({ status }) =>
-      DeliveryState.cases.Delivered.make({ status }),
-    Rejected: ({ status }) =>
-      DeliveryState.cases.Rejected.make({ status }),
-    ProtocolFailure: () => DeliveryState.cases.DeadLettered.make({
-      reason: "ProviderProtocolFailure",
-    }),
-    Exhausted: () => DeliveryState.cases.DeadLettered.make({
-      reason: "RetryBudgetExhausted",
-    }),
-  })
+} from "../services.ts"
 
 const makeMemoryRepository = (
   events: Map<EventId, RelayEvent>,
@@ -184,23 +132,7 @@ const makeMemoryRepository = (
           return
         }
 
-        const terminalState = attempt.decision === "Exhausted"
-          ? DeliveryState.cases.DeadLettered.make({
-            reason: "RetryBudgetExhausted",
-          })
-          : attempt.outcome === "Delivered" && attempt.status !== null
-          ? DeliveryState.cases.Delivered.make({
-            status: attempt.status,
-          })
-          : attempt.outcome === "Rejected" && attempt.status !== null
-          ? DeliveryState.cases.Rejected.make({
-            status: attempt.status,
-          })
-          : attempt.outcome === "ProtocolFailure"
-          ? DeliveryState.cases.DeadLettered.make({
-            reason: "ProviderProtocolFailure",
-          })
-          : undefined
+        const terminalState = terminalStateFromAttempt(attempt)
 
         if (terminalState === undefined) {
           return yield* Effect.fail(new DeliveryRepositoryError({
@@ -399,7 +331,7 @@ const makeMemoryRepository = (
           deliveryId,
           Delivery.make({
             ...current,
-            state: stateFromResult(result),
+            state: deliveryStateFromResult(result),
           }),
         )
         claims.delete(deliveryId)
@@ -562,123 +494,3 @@ const makeRelayPersistenceMemory = () => Layer.suspend(() => {
 export const RelayIntakeStoreMemory = makeRelayPersistenceMemory()
 
 export const RelayPersistenceMemory = makeRelayPersistenceMemory()
-
-export const RelayPersistenceLive = Layer.mergeAll(
-  DeliveryRepositorySql,
-  RelayIntakeStoreSql,
-  RelayMigrationsLive,
-).pipe(
-  Layer.provide(PostgresLive),
-)
-
-export type RelayPersistenceLayer = Layer.Layer<
-  DeliveryRepository | RelayIntakeStore,
-  unknown
->
-
-export const makeRelayAdapterLayer = (
-  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
-  persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
-) =>
-  Layer.mergeAll(
-    DestinationClientLive.pipe(
-      Layer.provide(httpClientLayer),
-    ),
-    persistenceLayer,
-  )
-
-export const makeRelayApplicationLayer = (
-  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
-  configProvider: ConfigProvider.ConfigProvider,
-  persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
-  workerIdentityLayer: Layer.Layer<
-    WorkerIdentity,
-    unknown
-  > = WorkerIdentityLive,
-  incidentAnalysisModelLayer: Layer.Layer<
-    IncidentAnalysisModel,
-    unknown
-  > = IncidentAnalysisModelUnavailable,
-  incidentAnalysisAuditLayer: Layer.Layer<
-    IncidentAnalysisAudit,
-    unknown
-  > = IncidentAnalysisAuditMemory,
-) => {
-  const dependencies = Layer.mergeAll(
-    makeRelayAdapterLayer(httpClientLayer, persistenceLayer),
-    AppConfigurationLive,
-    NodeCrypto.layer,
-  ).pipe(
-    Layer.provide(ConfigProvider.layer(configProvider)),
-  )
-  const distributedDependencies = Layer.merge(
-    dependencies,
-    workerIdentityLayer,
-  )
-
-  const supervisor = DeliverySupervisorLive.pipe(
-    Layer.provideMerge(DeliveryEventsLive),
-    Layer.provideMerge(distributedDependencies),
-  )
-
-  const application = Layer.mergeAll(
-    ReconcilerLive,
-    EventIntakeLive,
-    DeliveryOperationsLive,
-  ).pipe(
-    Layer.provideMerge(supervisor),
-  )
-
-  return DeliveryAnalystLive.pipe(
-    Layer.provideMerge(application),
-    Layer.provideMerge(incidentAnalysisModelLayer),
-    Layer.provideMerge(incidentAnalysisAuditLayer),
-  )
-}
-
-export type RelayHttpServerLayer = ReturnType<
-  typeof NodeHttpServer.layer
->
-
-export const makeRelayHttpApplicationLayer = (
-  httpClientLayer: Layer.Layer<HttpClient.HttpClient>,
-  httpServerLayer: RelayHttpServerLayer,
-  configProvider: ConfigProvider.ConfigProvider,
-  persistenceLayer: RelayPersistenceLayer = RelayPersistenceMemory,
-  readinessLayer: Layer.Layer<RelayReadiness> = RelayReadinessLive,
-  workerIdentityLayer: Layer.Layer<
-    WorkerIdentity,
-    unknown
-  > = WorkerIdentityLive,
-  incidentAnalysisModelLayer: Layer.Layer<
-    IncidentAnalysisModel,
-    unknown
-  > = IncidentAnalysisModelUnavailable,
-  incidentAnalysisAuditLayer: Layer.Layer<
-    IncidentAnalysisAudit,
-    unknown
-  > = IncidentAnalysisAuditMemory,
-) => {
-  const application = makeRelayApplicationLayer(
-    httpClientLayer,
-    configProvider,
-    persistenceLayer,
-    workerIdentityLayer,
-    incidentAnalysisModelLayer,
-    incidentAnalysisAuditLayer,
-  )
-  const intakeAuthorization = IntakeAuthorizationLive.pipe(
-    Layer.provide(ConfigProvider.layer(configProvider)),
-  )
-  const operationsAuthorization = OperationsAuthorizationLive.pipe(
-    Layer.provide(ConfigProvider.layer(configProvider)),
-  )
-
-  return HttpRouter.serve(DeliveryHttpRoutes).pipe(
-    Layer.provideMerge(application),
-    Layer.provideMerge(intakeAuthorization),
-    Layer.provideMerge(operationsAuthorization),
-    Layer.provideMerge(readinessLayer),
-    Layer.provideMerge(httpServerLayer),
-  )
-}

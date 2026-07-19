@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
 import { ClaimLostError } from "../src/errors.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ClaimGeneration,
   DeliveryAttemptDecision,

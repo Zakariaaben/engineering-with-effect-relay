@@ -18,7 +18,7 @@ import {
   IntakeAuthorization,
   OperationsAuthorization,
 } from "../src/httpServer.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import { DestinationId } from "../src/model.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import { RelayReadiness } from "../src/readiness.ts"

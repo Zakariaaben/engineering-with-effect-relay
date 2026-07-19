@@ -5,7 +5,7 @@ import { Effect, Layer, Option } from "effect"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import {
   DeliveryRepositorySql,
-} from "../src/deliveryRepositorySql.ts"
+} from "../src/adapters/postgres/deliveryRepository.ts"
 import {
   Delivery,
   DeliveryId,

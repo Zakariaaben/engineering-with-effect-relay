@@ -13,8 +13,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient"
 import type * as SqlConnection from "effect/unstable/sql/SqlConnection"
 import * as SqlError from "effect/unstable/sql/SqlError"
 import { IngestionConflictError } from "../src/errors.ts"
-import { makeRelayIntakeStoreSql } from "../src/intakeStoreSql.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { makeRelayIntakeStoreSql } from "../src/adapters/postgres/intakeStore.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   ConfigurationVersion,
   ClaimGeneration,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
-import { makeRelayAdapterLayer } from "../src/layers.ts"
+import { makeRelayAdapterLayer } from "../src/app/layer.ts"
 import { sendDelivery } from "../src/effectSender.ts"
 import { DeliveryRepository } from "../src/services.ts"
 import {
@@ -69,14 +69,14 @@ const inspectConsumers = Effect.gen(function* () {
 describe("C03-06 Layer graph", () => {
   it("builds Relay's current adapter leaves as one graph", async () => {
     let requests = 0
-    const adapters = makeRelayAdapterLayer(
-      makeHttpClientLayer((request) =>
+    const adapters = makeRelayAdapterLayer({
+      httpClient: makeHttpClientLayer((request) =>
         Effect.sync(() => {
           requests += 1
           return makeHttpResponse(request)
         })
       ),
-    )
+    })
     const program = Effect.gen(function* () {
       const repository = yield* DeliveryRepository
       yield* repository.save(delivery)

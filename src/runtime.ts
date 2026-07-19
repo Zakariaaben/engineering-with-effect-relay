@@ -18,15 +18,17 @@ import { DeliveryOperations } from "./deliveryOperations.ts"
 import { EventIntake } from "./eventIntake.ts"
 import {
   DeliverySupervisor,
-  type DeliveryConcurrencyMetrics,
-  type DeliveryLoadMetrics,
 } from "./deliverySupervisor.ts"
+import type {
+  DeliveryConcurrencyMetrics,
+  DeliveryLoadMetrics,
+} from "./deliveryAdmission.ts"
 import {
   makeRelayHttpApplicationLayer,
   RelayPersistenceLive,
   type RelayHttpServerLayer,
   type RelayPersistenceLayer,
-} from "./layers.ts"
+} from "./app/layer.ts"
 import {
   DeliveryAnalyst,
   IncidentAnalysisAudit,
@@ -197,19 +199,23 @@ export const startRelayApplication = async (options: {
   readonly configProvider: ConfigProvider.ConfigProvider
   readonly registerShutdownHook: RegisterShutdownHook
 }): Promise<RelayApplication> => {
-  const applicationLayer = makeRelayHttpApplicationLayer(
-    options.httpClientLayer ?? NodeHttpClient.layerNodeHttp,
-    options.httpServerLayer ?? NodeHttpServer.layer(
+  const applicationLayer = makeRelayHttpApplicationLayer({
+    httpClient: options.httpClientLayer ?? NodeHttpClient.layerNodeHttp,
+    httpServer: options.httpServerLayer ?? NodeHttpServer.layer(
       Http.createServer,
       { host: "127.0.0.1", port: 3_000 },
     ),
-    options.configProvider,
-    options.persistenceLayer ?? RelayPersistenceLive,
-    options.readinessLayer ?? RelayReadinessLive,
-    options.workerIdentityLayer ?? WorkerIdentityLive,
-    options.incidentAnalysisModelLayer,
-    options.incidentAnalysisAuditLayer,
-  )
+    configProvider: options.configProvider,
+    persistence: options.persistenceLayer ?? RelayPersistenceLive,
+    readiness: options.readinessLayer ?? RelayReadinessLive,
+    workerIdentity: options.workerIdentityLayer ?? WorkerIdentityLive,
+    ...(options.incidentAnalysisModelLayer === undefined ? {} : {
+      incidentAnalysisModel: options.incidentAnalysisModelLayer,
+    }),
+    ...(options.incidentAnalysisAuditLayer === undefined ? {} : {
+      incidentAnalysisAudit: options.incidentAnalysisAuditLayer,
+    }),
+  })
   const runtimeLayer = options.tracer === undefined
     ? applicationLayer
     : applicationLayer.pipe(

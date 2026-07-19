@@ -20,14 +20,14 @@ import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
 import {
   DeliverySupervisor,
   DeliverySupervisorLive,
-  type DeliveryLoadMetrics,
 } from "../src/deliverySupervisor.ts"
+import type { DeliveryLoadMetrics } from "../src/deliveryAdmission.ts"
 import {
   DestinationClient,
   type DestinationClientService,
 } from "../src/destinationClient.ts"
 import { DeliveryOverloaded } from "../src/errors.ts"
-import { RelayIntakeStoreMemory } from "../src/layers.ts"
+import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   Destination,
   DestinationId,
