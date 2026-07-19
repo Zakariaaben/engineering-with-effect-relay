@@ -6,7 +6,7 @@ import {
   Schema,
   Stream,
 } from "effect"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   DeliveryStatus,
   EventAcceptance,

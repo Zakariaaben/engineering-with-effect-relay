@@ -15,7 +15,7 @@ import {
 } from "../src/deliverySupervisor.ts"
 import { DestinationClient } from "../src/destinationClient.ts"
 import { DeliveryTransportError } from "../src/errors.ts"
-import { RelayIntakeStoreMemory } from "../src/layers.ts"
+import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   AmountCents,
   Destination,

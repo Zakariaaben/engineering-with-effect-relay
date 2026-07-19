@@ -3,7 +3,7 @@ import { Effect, Option, Schema } from "effect"
 import {
   deliveryToRow,
   makeDeliveryRepositorySql,
-} from "../src/deliveryRepositorySql.ts"
+} from "../src/adapters/postgres/deliveryRepository.ts"
 import {
   ClaimLostError,
 } from "../src/errors.ts"

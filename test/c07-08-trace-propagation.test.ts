@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { ConfigProvider, Effect, Tracer } from "effect"
 import type { Span } from "effect/Tracer"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
   event,
@@ -81,11 +81,11 @@ describe("C07-08 trace propagation", () => {
       const server = byName("http.server POST")
       const deliver = byName("DeliverySupervisor.deliver")
       const deliverTo = byName("DeliverySupervisor.deliverTo")
-      const admit = byName("DeliverySupervisor.admit")
+      const admit = byName("DeliveryAdmission.admit")
       const persist = byName("RelayIntakeStore.savePending")
       const submitClaimed = byName("DeliverySupervisor.submitClaimed")
       const offerClaimed = byName("DeliverySupervisor.offerClaimed")
-      const processJob = byName("DeliverySupervisor.processJob")
+      const processJob = byName("DeliveryWorker.process")
       const outbound = byName("http.client POST")
 
       expect(parentSpanId(server)).toBe(upstreamSpanId)
@@ -110,7 +110,7 @@ describe("C07-08 trace propagation", () => {
         ancestorNames.push(parent.value.name)
         parent = parent.value.parent
       }
-      expect(ancestorNames).toContain("DeliverySupervisor.processJob")
+      expect(ancestorNames).toContain("DeliveryWorker.process")
       expect(outboundTraceparent).toBe(
         `00-${traceId}-${outbound.spanId}-01`,
       )

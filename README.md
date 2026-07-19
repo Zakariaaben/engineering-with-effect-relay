@@ -1,125 +1,110 @@
-# Engineering with Effect — Relay
+# Engineering with Effect: Relay
 
-Relay is the single cumulative system built throughout the **Engineering with
-Effect** course. It accepts events and delivers them to a snapshotted set of
-trusted webhook destinations.
+Relay is the cumulative application built throughout **Engineering with
+Effect**. It accepts invoice events, commits delivery intent, and sends webhooks
+to a trusted configured destination.
 
-The repository intentionally starts without application code. Course chapters
-introduce the system honestly: first a small Promise baseline, then typed
-boundaries, explicit failures, services and lifetimes, bounded concurrency,
-retry policy, flow control, persistence, crash recovery, multiple workers, and
-operational reconciliation.
+It begins in the course as a small, honest Promise sender. Requirements then
+create the pressure for typed boundaries, explicit failures, owned resources,
+bounded concurrency, finite retry policy, flow control, persistence, crash
+recovery, multiple workers, and operational repair.
 
-## Repository model
+**Relay never claims exactly-once remote effects.** A receiver can accept a
+request while Relay remains uncertain about the result. The delivery ID stays
+stable across attempts so a cooperating receiver can deduplicate, but the
+receiver owns that guarantee.
 
-- `main` contains the latest accepted cumulative state.
-- `chapter/<chapter-id>-<slug>` branches show how one chapter changes Relay.
-- Immutable `course/v1/chapter/<chapter-id>/start` and
-  `course/v1/chapter/<chapter-id>/complete` tags become learner checkpoints.
-- Bun is used for installation, scripts, tests, and TypeScript commands.
+## What the current application guarantees
 
-This is a production-shaped teaching system, not a ready-to-deploy public
-webhook service. Security, tenancy, SSRF protection, secret rotation, quotas,
-retention, compliance, and multi-region operation require additional design.
+- Unknown intake is decoded before domain construction.
+- Idempotent acceptance commits the event, route snapshot, and delivery intent
+  atomically.
+- Global and per-destination admission and attempt limits are explicit.
+- Retry is classified, bounded by attempts and elapsed time, and driven by an
+  injectable clock and random service.
+- Claims use leases and monotonically increasing generations. A stale worker
+  cannot mutate authoritative database state.
+- Attempt history, dead letters, reconciliation, readiness, shutdown, logs,
+  traces, and metrics have deterministic evidence in the test suite.
 
-Relay accompanies the learner-facing Engineering with Effect course.
+This is a **production-shaped teaching system**, not a ready-to-deploy public
+webhook product. Tenancy, arbitrary destination security, SSRF and DNS
+rebinding defense, secret rotation, quotas, retention, compliance, and
+multi-region operation require additional design.
 
-## M0 checkpoint
+## Read the code by responsibility
 
-The first checkpoint contains an honest Promise sender and a deliberately
-small Effect-shaped equivalent. Both use the same pure delivery policy and an
-injected native HTTP adapter; the comparison is about execution and failure
-contracts, not a Promise strawman.
+```text
+src/
+  app/layer.ts                 application and HTTP composition roots
+  adapters/
+    memoryPersistence.ts      deterministic in-memory adapter
+    postgres/                 SQL repository, intake transaction, migrations
+  deliveryAdmission.ts        admission and concurrency ownership
+  deliveryWorker.ts           one claimed delivery's lease and attempt lifecycle
+  deliverySupervisor.ts       queue, fiber ownership, and public delivery facade
+  deliveryEngine.ts           retry and attempt policy execution
+  eventIntake.ts              validated, idempotent event acceptance
+  httpServer.ts               HTTP contracts, handlers, and server policy
+  runtime.ts                  Promise-facing embedding boundary
+  main.node.ts                Node process entrypoint and signal-aware runtime
+```
 
-Run its deterministic evidence with:
+The dependency direction is deliberate: pure domain decisions feed application
+services, adapters implement the external boundaries, `app/layer.ts` assembles
+the graph, and process/runtime files stay at the edge.
+
+The delivery state truth table lives in `src/deliveryPolicy.ts`. Memory and SQL
+adapters consume the same decision, and `test/delivery-policy.test.ts` guards
+their parity.
+
+## Run the evidence
+
+The repository pins Bun, TypeScript, Effect, and official Effect packages in
+`package.json` and `bun.lock`.
 
 ```bash
 bun install --frozen-lockfile
 bun run validate
 ```
 
-The short [Act 1 design note](docs/act-01-design-note.md) records which pressure
-comes from Relay's domain, Promise semantics, or missing application
-architecture.
+Validation type-checks the complete application and runs the deterministic
+unit, integration, incident, lifecycle, concurrency, and persistence suites.
 
-## M3 checkpoint
+## Run the current Node application
 
-Relay's local engine owns every dynamic delivery fiber and bounds active
-outbound sends with configurable global and per-destination limits. Concurrency
-metrics report active attempts without exposing destination credentials. Scope
-shutdown interrupts both active sends and work waiting for permits, and waits
-for their finalizers before disposal completes.
+The complete application requires PostgreSQL 17 and these secrets or boundary
+values:
 
-This remains an in-memory, single-process milestone. It has no durable intake,
-retry policy, crash recovery, untrusted-destination defense, or cross-process
-capacity guarantee.
+- `RELAY_DATABASE_URL`
+- `RELAY_DESTINATION_URL`
+- `RELAY_DESTINATION_AUTHORIZATION`
+- `RELAY_INTAKE_AUTHORIZATION`
+- `RELAY_OPERATIONS_AUTHORIZATION`
 
-## M4 checkpoint
+Optional configuration includes `RELAY_HOST`, `RELAY_PORT`, concurrency,
+admission, retry, claim, and polling settings. Defaults are decoded and checked
+through Effect `Config`; credentials remain redacted.
 
-Relay now gives every outbound attempt a timeout and classifies its evidence
-before deciding whether to stop or retry. Successful responses and ordinary
-client rejections are terminal. Timeouts, transport failures, 408, 425, 429,
-and 5xx responses may enter a bounded retry schedule with capped exponential
-backoff, full jitter, elapsed-time and attempt limits, and provider
-`Retry-After` evidence.
+```bash
+bun run start
+```
 
-Each logical delivery keeps one generated `DeliveryId` as its
-`Idempotency-Key`, and its result carries ordered attempt history plus visible
-exhaustion. Retry sleeps do not occupy outbound concurrency permits; each real
-network attempt must acquire capacity again.
+`NodeRuntime.runMain` owns process signals and finalization. The separate
+`startRelayApplication` function remains available when a test or another Node
+application needs a Promise-facing embedding boundary.
 
-Timeout and transport ambiguity mean a retry can duplicate a remote effect.
-The stable key prevents that duplicate only when the destination validates and
-deduplicates it. Relay therefore does not claim exactly-once delivery. This is
-still an in-memory, single-process checkpoint: retry state and attempt history
-do not survive a crash, and capacity is not coordinated across processes.
+## Operational repair
 
-## M5 checkpoint
+The authenticated teaching fixture can inspect delivery history, list dead
+letters, retry with the accepted route, repair with the current trusted route,
+terminate work, and request one bounded reconciliation pass.
 
-Relay now admits delivery requests through a bounded local Queue consumed by a
-scoped Stream. A separate admission permit bounds the complete accepted
-population, including work waiting behind active-attempt limits. When no permit
-is available, the caller receives a typed `DeliveryOverloaded` failure instead
-of creating another waiting fiber.
+The [recovery runbook](ops/recovery-runbook.md), [guarantee evidence](ops/guarantee-evidence.md),
+and [dashboard fixture](ops/relay-m9-dashboard.json) connect operator decisions
+to the exact authority and evidence behind each claim.
 
-The earlier global and per-destination attempt limits remain the socket
-bulkheads. Load snapshots expose admitted deliveries, active owned deliveries,
-queue depth and capacity, active attempts by destination, configured limits,
-and cumulative rejections. The queue and permits are process-local: they do not
-coordinate a fleet, provide durable intake, or reserve queue space per tenant.
-Relay does not add a proactive time-based rate limit without a destination rate
-contract.
-
-The M5 act gate keeps one slow destination saturated while a producer repeatedly
-offers excess work, releases one delivery, and submits one replacement. The
-test proves admitted work never exceeds its configured capacity, active work
-never exceeds the per-destination limit, every excess offer is rejected
-visibly, and all accepted work can drain without sleeps or wall-clock guesses.
-
-## M9 checkpoint
-
-Relay now exposes a separately authenticated operations boundary for inspecting
-delivery history, listing dead letters, retrying with the accepted route,
-repairing with the current trusted route, terminating work, and requesting one
-bounded reconciliation pass. Every mutation is conditional on durable state;
-attempt history and claim generations continue across operator replay.
-
-The [recovery runbook](ops/recovery-runbook.md) connects those decisions to a
-[dashboard query fixture](ops/relay-m9-dashboard.json) and states the remote,
-security, pagination, audit, and metric-export boundaries that remain outside
-this teaching system.
-
-## AI specialist checkpoint
-
-Relay can optionally analyze one delivery's sanitized state, total attempt
-count, and latest 20 attempt classifications through an injected Effect
-`LanguageModel`. The analyst never receives the event payload, destination
-endpoint, authorization, worker identity, claim generation, or trace
-identifiers, and it has no recovery mutation capability.
-Every returned suggestion is recorded in a bounded in-memory audit history.
-When no model is configured or generation fails, Relay returns and records a
-deterministic runbook-oriented fallback instead of making operations depend on
-the provider.
-
-This audit history is process-local and retains only the latest 100 reports. It
-is evidence for the teaching fixture, not a durable organizational audit log.
+An optional AI specialist adapter can analyze a sanitized delivery summary. It
+cannot see payloads, endpoints, credentials, worker identity, fencing tokens,
+or trace identifiers, and it has no mutation capability. Model failure falls
+back to deterministic runbook guidance.

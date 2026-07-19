@@ -5,7 +5,7 @@ import * as Reactivity from "effect/unstable/reactivity/Reactivity"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 import type * as SqlConnection from "effect/unstable/sql/SqlConnection"
 import * as SqlError from "effect/unstable/sql/SqlError"
-import { makeRelayIntakeStoreSql } from "../src/intakeStoreSql.ts"
+import { makeRelayIntakeStoreSql } from "../src/adapters/postgres/intakeStore.ts"
 import { DeliveryId, WorkerId } from "../src/model.ts"
 import { destination, event } from "./fixtures.ts"
 

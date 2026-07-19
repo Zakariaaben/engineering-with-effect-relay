@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { Config, ConfigProvider, Effect } from "effect"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   type RegisterShutdownHook,
   startRelayApplication,

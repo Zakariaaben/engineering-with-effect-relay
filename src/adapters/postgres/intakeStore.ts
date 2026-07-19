@@ -3,8 +3,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient"
 import {
   IngestionConflictError,
   RelayIntakeStoreError,
-} from "./errors.ts"
-import { deliveryToRow } from "./deliveryRepositorySql.ts"
+} from "../../errors.ts"
+import { deliveryToRow } from "./deliveryRepository.ts"
 import {
   AmountCents,
   ClaimGeneration,
@@ -20,12 +20,12 @@ import {
   RelayEvent,
   RequestFingerprint,
   WorkerId,
-} from "./model.ts"
+} from "../../model.ts"
 import {
   IntakeDecision,
   type IntakeRecord,
   RelayIntakeStore,
-} from "./services.ts"
+} from "../../services.ts"
 
 const intakeStoreError = (
   operation: "savePending" | "accept",

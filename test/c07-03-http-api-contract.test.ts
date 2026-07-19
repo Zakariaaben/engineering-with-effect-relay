@@ -13,7 +13,7 @@ import {
   RelayHttpApi,
   UnauthorizedProblem,
 } from "../src/httpServer.ts"
-import { RelayPersistenceMemory } from "../src/layers.ts"
+import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import { startRelayApplication } from "../src/runtime.ts"
 import {
   event,
