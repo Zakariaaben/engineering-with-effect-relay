@@ -10,7 +10,7 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
-    "types": ["bun"]
+    "types": ["bun", "emscripten"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
