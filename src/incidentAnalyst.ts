@@ -10,6 +10,7 @@ import {
 import { AiError, LanguageModel } from "effect/unstable/ai"
 import type { DeliveryRepositoryError } from "./errors.ts"
 import {
+  DeliveryState,
   type DeliveryStatus,
 } from "./delivery.ts"
 import { DeliveryId } from "./identifiers.ts"
@@ -20,9 +21,6 @@ const BoundedAnalysisText = Schema.String.check(
   Schema.isMaxLength(500),
 )
 
-export interface IncidentSuggestion extends
-  Schema.Schema.Type<typeof IncidentSuggestion> {}
-
 export const IncidentSuggestion = Schema.Struct({
   summary: BoundedAnalysisText,
   nextChecks: Schema.Tuple([
@@ -30,6 +28,9 @@ export const IncidentSuggestion = Schema.Struct({
     BoundedAnalysisText,
   ]),
 })
+
+export interface IncidentSuggestion extends
+  Schema.Schema.Type<typeof IncidentSuggestion> {}
 
 export interface IncidentEvidence {
   readonly deliveryId: string
@@ -47,9 +48,6 @@ export interface IncidentEvidence {
 }
 
 const analysisAttemptLimit = 20
-
-export interface IncidentAnalysisReport extends
-  Schema.Schema.Type<typeof IncidentAnalysisReport> {}
 
 export const IncidentAnalysisReport = Schema.Struct({
   deliveryId: DeliveryId,
@@ -70,6 +68,9 @@ export const IncidentAnalysisReport = Schema.Struct({
   modelFailure: Schema.NullOr(Schema.String),
   suggestion: IncidentSuggestion,
 })
+
+export interface IncidentAnalysisReport extends
+  Schema.Schema.Type<typeof IncidentAnalysisReport> {}
 
 export class IncidentAnalysisNotFound extends
   Schema.TaggedErrorClass<IncidentAnalysisNotFound>()(
@@ -92,7 +93,9 @@ export class IncidentAnalysisAudit extends Context.Service<
     readonly append: (
       report: IncidentAnalysisReport,
     ) => Effect.Effect<void>
-    readonly history: Effect.Effect<ReadonlyArray<IncidentAnalysisReport>>
+    readonly history: () => Effect.Effect<
+      ReadonlyArray<IncidentAnalysisReport>
+    >
   }
 >()("Relay/IncidentAnalysisAudit") {}
 
@@ -110,12 +113,13 @@ export class DeliveryAnalyst extends Context.Service<
 
 const makeEvidence = (status: DeliveryStatus): IncidentEvidence => {
   const state = status.delivery.state
-  const stateDetail = state._tag === "Delivered" ||
-      state._tag === "Rejected"
-    ? `status:${state.status}`
-    : state._tag === "DeadLettered" || state._tag === "Terminated"
-    ? `reason:${state.reason}`
-    : null
+  const stateDetail = DeliveryState.match<string | null>(state, {
+    Pending: () => null,
+    Delivered: ({ status }) => `status:${status}`,
+    Rejected: ({ status }) => `status:${status}`,
+    DeadLettered: ({ reason }) => `reason:${reason}`,
+    Terminated: ({ reason }) => `reason:${reason}`,
+  })
 
   return {
     deliveryId: status.delivery.id,
@@ -184,7 +188,9 @@ const unavailableModelError = AiError.make({
 export const IncidentAnalysisModelUnavailable = Layer.succeed(
   IncidentAnalysisModel,
   IncidentAnalysisModel.of({
-    analyze: () => Effect.fail(unavailableModelError),
+    analyze: Effect.fn("IncidentAnalysisModel.analyze")(
+      () => Effect.fail(unavailableModelError),
+    ),
   }),
 )
 
@@ -194,16 +200,19 @@ export const IncidentAnalysisAuditMemory = Layer.effect(
   IncidentAnalysisAudit,
   Effect.gen(function* () {
     const reports = yield* Ref.make<ReadonlyArray<IncidentAnalysisReport>>([])
-    return IncidentAnalysisAudit.of({
-      append: (report) =>
+    const append = Effect.fn("IncidentAnalysisAudit.append")(
+      (report: IncidentAnalysisReport) =>
         Ref.update(reports, (current) => {
           const retained = current.length < auditCapacity
             ? current
             : current.slice(current.length - auditCapacity + 1)
           return [...retained, report]
         }),
-      history: Ref.get(reports),
-    })
+    )
+    const history = Effect.fn("IncidentAnalysisAudit.history")(
+      () => Ref.get(reports),
+    )
+    return IncidentAnalysisAudit.of({ append, history })
   }),
 )
 

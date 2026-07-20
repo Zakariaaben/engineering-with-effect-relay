@@ -172,7 +172,7 @@ const incidentAnalysisAuditTrail = Effect.fn(
   "Relay.incidentAnalysisAuditTrail",
 )(function* () {
   const audit = yield* IncidentAnalysisAudit
-  return yield* audit.history
+  return yield* audit.history()
 })
 
 const httpAddress = Effect.fn("Relay.httpAddress")(function* () {
