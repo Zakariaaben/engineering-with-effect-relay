@@ -20,7 +20,7 @@ import {
   DeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
 import type { DeliveryLoadMetrics } from "../src/deliveryAdmission.ts"
-import { DestinationClient } from "../src/destinationClient.ts"
+import { DestinationClient } from "../src/destination.ts"
 import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import { WorkerId } from "../src/model.ts"
 import { makeWorkerIdentityLayer } from "../src/workerIdentity.ts"

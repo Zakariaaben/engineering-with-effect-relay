@@ -4,7 +4,8 @@ import {
   operationsAuthorizationClientLayer,
   RelayOperationsHttpApi,
 } from "./operationsApi.ts"
-import type { DeliveryId, DeliveryStatus } from "./model.ts"
+import type { DeliveryStatus } from "./delivery.ts"
+import type { DeliveryId } from "./identifiers.ts"
 
 export class AdminRequestError extends Schema.TaggedErrorClass<AdminRequestError>()(
   "AdminRequestError",

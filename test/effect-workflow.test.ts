@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import type { DestinationClientService } from "../src/destinationClient.ts"
-import { sendDelivery } from "../src/effectSender.ts"
+import type { DestinationClientService } from "../src/destination.ts"
+import { runDelivery } from "../src/delivery.ts"
 import { DeliveryTransportError } from "../src/errors.ts"
 import {
   delivery,
@@ -26,7 +26,7 @@ describe("Relay M0 Effect workflow", () => {
       },
     }
 
-    const program = sendDelivery(
+    const program = runDelivery(
       delivery.id,
       event,
       destination,
@@ -54,7 +54,7 @@ describe("Relay M0 Effect workflow", () => {
     }
 
     const failure = await Effect.runPromise(
-      sendDelivery(delivery.id, event, destination).pipe(
+      runDelivery(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
         Effect.flip,
       ),
@@ -76,7 +76,7 @@ describe("Relay M0 Effect workflow", () => {
     const controller = new AbortController()
 
     const run = Effect.runPromise(
-      sendDelivery(delivery.id, event, destination).pipe(
+      runDelivery(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
       { signal: controller.signal },

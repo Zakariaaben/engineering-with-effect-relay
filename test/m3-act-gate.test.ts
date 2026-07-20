@@ -19,7 +19,7 @@ import {
   DeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
 import { DeliveryEventsLive } from "../src/deliveryEvents.ts"
-import { DestinationClient } from "../src/destinationClient.ts"
+import { DestinationClient } from "../src/destination.ts"
 import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   Destination,
@@ -93,7 +93,7 @@ const metrics = (runtime: ReturnType<typeof makeSupervisorRuntime>) =>
     ),
   )
 
-describe("C04-12 M3 act gate", () => {
+describe("Relay M3 act gate", () => {
   it("reproduces the unbounded socket-pressure incident", async () => {
     expect(await reproduceUnboundedDeliveryPressure(8)).toEqual({
       active: 8,

@@ -16,11 +16,13 @@ import {
   DeliveryOutcome,
   DeliveryResult,
   type DeliveryAttempt,
-  type DeliveryId,
   type DeliveryOutcome as DeliveryOutcomeType,
   type DeliveryResult as DeliveryResultType,
-  type DestinationId,
-} from "./model.ts"
+} from "./delivery.ts"
+import type {
+  DeliveryId,
+  DestinationId,
+} from "./identifiers.ts"
 
 export interface AttemptObservation {
   readonly ordinal: number

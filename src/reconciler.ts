@@ -11,8 +11,10 @@ import {
 import { AppConfiguration } from "./configuration.ts"
 import { DeliverySupervisor } from "./deliverySupervisor.ts"
 import type { DeliveryRepositoryError } from "./errors.ts"
-import type { ClaimedDelivery } from "./services.ts"
-import { DeliveryRepository } from "./services.ts"
+import {
+  DeliveryRepository,
+  type ClaimedDelivery,
+} from "./deliveryRepository.ts"
 import { WorkerIdentity } from "./workerIdentity.ts"
 
 const reconciliationPasses = Metric.counter(

@@ -25,7 +25,7 @@ import type { DeliveryLoadMetrics } from "../src/deliveryAdmission.ts"
 import {
   DestinationClient,
   type DestinationClientService,
-} from "../src/destinationClient.ts"
+} from "../src/destination.ts"
 import { DeliveryOverloaded } from "../src/errors.ts"
 import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import {

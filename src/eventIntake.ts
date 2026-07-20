@@ -22,19 +22,19 @@ import {
 import {
   generateDeliveryId,
   generateEventId,
+  type IngestionKey,
+  RequestFingerprint,
 } from "./identifiers.ts"
 import {
-  DeliveryRouteSnapshot,
   EventAcceptance,
   EventSubmission,
-  type IngestionKey,
   RelayEvent,
-  RequestFingerprint,
-} from "./model.ts"
+} from "./command.ts"
+import { DeliveryRouteSnapshot } from "./destination.ts"
 import {
   IntakeDecision,
   RelayIntakeStore,
-} from "./services.ts"
+} from "./intakeStore.ts"
 import { WorkerIdentity } from "./workerIdentity.ts"
 
 type EventIntakeFailure =

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import type { DestinationClientService } from "../src/destinationClient.ts"
+import type { DestinationClientService } from "../src/destination.ts"
 import {
   DeliveryTransportError,
   InvalidEventError,
 } from "../src/errors.ts"
-import { deliverCandidate } from "../src/workflow.ts"
+import { deliverCandidate } from "../src/delivery.ts"
 import {
   delivery,
   destination,

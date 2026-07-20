@@ -20,7 +20,7 @@ import {
   DeliverySupervisor,
   DeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
-import { DestinationClient } from "../src/destinationClient.ts"
+import { DestinationClient } from "../src/destination.ts"
 import { RelayIntakeStoreMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   Destination,

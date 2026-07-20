@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
 import { makeRelayAdapterLayer } from "../src/app/layer.ts"
-import { sendDelivery } from "../src/effectSender.ts"
+import { runDelivery } from "../src/delivery.ts"
 import { DeliveryRepository } from "../src/services.ts"
 import {
   delivery,
@@ -81,7 +81,7 @@ describe("C03-06 Layer graph", () => {
       const repository = yield* DeliveryRepository
       yield* repository.save(delivery)
       const stored = yield* repository.findById(delivery.id)
-      const outcome = yield* sendDelivery(
+      const outcome = yield* runDelivery(
         delivery.id,
         event,
         destination,

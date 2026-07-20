@@ -36,23 +36,34 @@ multi-region operation require additional design.
 
 ```text
 src/
-  app/layer.ts                 application and HTTP composition roots
+  command.ts                   untrusted input and trusted event command
+  identifiers.ts               checked domain identities and generators
+  destination.ts               outbound capability and transport evidence
+  delivery.ts                  delivery state, pure policy, and one attempt
+  deliveryEngine.ts            finite retry and attempt execution
+  deliveryRepository.ts        durable delivery authority contract
+  intakeStore.ts               atomic intake authority contract
   adapters/
     memoryPersistence.ts      deterministic in-memory adapter
     postgres/                 SQL repository, intake transaction, migrations
-  deliveryAdmission.ts        admission and concurrency ownership
+  http/destination-live.ts     live outbound HTTP Layer
+  deliveryAdmission.ts        complete local-lifetime admission
+  deliveryCapacity.ts         active-attempt capacity
   deliveryWorker.ts           one claimed delivery's lease and attempt lifecycle
-  deliverySupervisor.ts       queue, fiber ownership, and public delivery facade
-  deliveryEngine.ts           retry and attempt policy execution
+  deliverySupervisor.ts       bounded handoff, fiber ownership, and facade
   eventIntake.ts              validated, idempotent event acceptance
   httpServer.ts               HTTP contracts, handlers, and server policy
+  app/layer.ts                 application and HTTP composition roots
   runtime.ts                  Promise-facing embedding boundary
   main.node.ts                Node process entrypoint and signal-aware runtime
 ```
 
-The dependency direction is deliberate: pure domain decisions feed application
-services, adapters implement the external boundaries, `app/layer.ts` assembles
-the graph, and process/runtime files stay at the edge.
+The dependency direction is deliberate. Feature modules keep their schema,
+public capability, and ordinary operations together. Adapters implement
+external boundaries, `app/layer.ts` assembles the graph once, and runtime files
+stay at the host edge. `model.ts` and `services.ts` only preserve imports used
+by older immutable checkpoints; current application code imports features
+directly.
 
 The delivery state truth table lives in `src/deliveryPolicy.ts`. Memory and SQL
 adapters consume the same decision, and `test/delivery-policy.test.ts` guards

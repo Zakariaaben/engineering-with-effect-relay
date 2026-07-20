@@ -6,7 +6,7 @@ import {
   EventId,
   IngestionKey,
   WorkerId,
-} from "./model.ts"
+} from "./identifiers.ts"
 
 export class InvalidEventError extends Schema.TaggedErrorClass<InvalidEventError>()(
   "InvalidEventError",

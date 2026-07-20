@@ -14,16 +14,26 @@ import {
   Stream,
   Tracer,
 } from "effect"
+import {
+  decodeIncomingEvent,
+  type RelayEvent,
+} from "./command.ts"
 import { AppConfiguration } from "./configuration.ts"
 import {
   type DeliveryLoadMetrics,
-  type DeliveryConcurrencyMetrics,
   makeDeliveryAdmission,
 } from "./deliveryAdmission.ts"
+import {
+  type DeliveryConcurrencyMetrics,
+  makeDeliveryCapacity,
+} from "./deliveryCapacity.ts"
 import type { AttemptObservation } from "./deliveryEngine.ts"
 import { makeDeliveryMetrics } from "./deliveryMetrics.ts"
 import { DeliveryEvents } from "./deliveryEvents.ts"
-import { DestinationClient } from "./destinationClient.ts"
+import {
+  Destination,
+  DestinationClient,
+} from "./destination.ts"
 import {
   type DeliveryJob,
   makeDeliveryWorker,
@@ -37,21 +47,18 @@ import {
   type RelayIntakeStoreError,
 } from "./errors.ts"
 import { generateDeliveryId } from "./identifiers.ts"
-import { Destination } from "./model.ts"
 import type {
   Delivery,
   DeliveryAttempt,
-  DeliveryId,
   DeliveryResult,
-  RelayEvent,
-} from "./model.ts"
+} from "./delivery.ts"
+import type { DeliveryId } from "./identifiers.ts"
 import {
   DeliveryRepository,
-  RelayIntakeStore,
   type ClaimedDelivery,
-} from "./services.ts"
+} from "./deliveryRepository.ts"
+import { RelayIntakeStore } from "./intakeStore.ts"
 import { WorkerIdentity } from "./workerIdentity.ts"
-import { decodeIncomingEvent } from "./workflow.ts"
 
 type DeliveryExecutionFailure =
   | InvalidEventError
@@ -153,8 +160,13 @@ export const makeDeliverySupervisorLive = (
       requestQueueDepth: 0,
       requestQueueCapacity: configuration.flow.deliveryRequestsCapacity,
     })
+    const capacity = yield* makeDeliveryCapacity({
+      configuration,
+      metrics,
+    })
     const admission = yield* makeDeliveryAdmission({
       configuration,
+      concurrencyMetrics: capacity.metrics,
       metrics,
     })
 
@@ -165,7 +177,7 @@ export const makeDeliverySupervisorLive = (
       hooks,
       metrics,
       repository,
-      withCapacity: admission.withCapacity,
+      withAttempt: capacity.withAttempt,
     })
 
     const dispatchJob = Effect.fn("DeliverySupervisor.dispatchJob")(
@@ -342,7 +354,7 @@ export const makeDeliverySupervisorLive = (
     })
     const concurrencyMetrics = Effect.fn(
       "DeliverySupervisor.concurrencyMetrics",
-    )(() => admission.concurrencyMetrics)
+    )(() => capacity.metrics)
     const loadMetrics = Effect.fn(
       "DeliverySupervisor.loadMetrics",
     )(function* () {

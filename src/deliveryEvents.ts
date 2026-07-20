@@ -6,7 +6,7 @@ import {
   Stream,
 } from "effect"
 import { AppConfiguration } from "./configuration.ts"
-import type { DeliveryResult } from "./model.ts"
+import type { DeliveryResult } from "./delivery.ts"
 
 export class DeliveryEvents extends Context.Service<DeliveryEvents, {
   readonly publish: (

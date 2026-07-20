@@ -7,10 +7,10 @@ import {
 } from "effect/unstable/cli"
 import { RelayAdminClient } from "./adminClient.ts"
 import {
-  DeliveryId,
   DeliveryStatus,
   type DeliveryStatus as DeliveryStatusValue,
-} from "./model.ts"
+} from "./delivery.ts"
+import { DeliveryId } from "./identifiers.ts"
 
 export type OutputMode = "human" | "json"
 
@@ -79,14 +79,13 @@ export const Output = GlobalFlag.setting("output")({
 const list = Command.make(
   "list",
   {},
-  () =>
-    Effect.gen(function* () {
-      const client = yield* RelayAdminClient
-      const presenter = yield* AdminPresenter
-      const mode = yield* Output
-      const statuses = yield* client.listDeadLetters()
-      yield* presenter.listDeadLetters({ mode, statuses })
-    }),
+  Effect.fn("RelayAdminCli.list")(function* () {
+    const client = yield* RelayAdminClient
+    const presenter = yield* AdminPresenter
+    const mode = yield* Output
+    const statuses = yield* client.listDeadLetters()
+    yield* presenter.listDeadLetters({ mode, statuses })
+  }),
 ).pipe(Command.withDescription("List the first 50 dead letters"))
 
 const retry = Command.make(

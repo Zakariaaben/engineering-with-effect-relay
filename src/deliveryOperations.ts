@@ -4,10 +4,11 @@ import {
   type DeadLetterDestinationMismatchError,
   type DeadLetterRecoveryError,
 } from "./errors.ts"
-import { DeliveryRouteSnapshot } from "./model.ts"
-import type { DeliveryId, DeliveryStatus } from "./model.ts"
+import type { DeliveryStatus } from "./delivery.ts"
+import { DeliveryRouteSnapshot } from "./destination.ts"
+import type { DeliveryId } from "./identifiers.ts"
 import { AppConfiguration } from "./configuration.ts"
-import { DeliveryRepository } from "./services.ts"
+import { DeliveryRepository } from "./deliveryRepository.ts"
 
 const deadLetterActions = Metric.counter(
   "relay_delivery_dead_letter_actions_total",

@@ -10,32 +10,34 @@ import {
 } from "../../errors.ts"
 import { deliveryStateFromResult } from "../../deliveryPolicy.ts"
 import {
-  AmountCents,
-  ClaimGeneration,
-  ConfigurationVersion,
   DeadLetterReason,
   Delivery,
   DeliveryAttemptRecord,
   DeliveryClaim,
-  DeliveryId,
   DeliveryResult,
-  DeliveryRouteSnapshot,
   DeliveryState,
   DeliveryStatus,
-  DestinationId,
-  EventId,
-  InvoiceId,
-  RelayEvent,
-  WorkerId,
   type Delivery as DeliveryValue,
   type DeliveryAttemptRecord as DeliveryAttemptRecordValue,
   type DeliveryClaim as DeliveryClaimValue,
   type DeliveryResult as DeliveryResultValue,
-} from "../../model.ts"
+} from "../../delivery.ts"
+import { RelayEvent } from "../../command.ts"
+import { DeliveryRouteSnapshot } from "../../destination.ts"
+import {
+  AmountCents,
+  ClaimGeneration,
+  ConfigurationVersion,
+  DeliveryId,
+  DestinationId,
+  EventId,
+  InvoiceId,
+  WorkerId,
+} from "../../identifiers.ts"
 import {
   DeliveryRepository,
   type ClaimedDelivery,
-} from "../../services.ts"
+} from "../../deliveryRepository.ts"
 
 const DeliveryRowFields = {
   delivery_id: DeliveryId,

@@ -3,13 +3,11 @@ import { Cause, Effect, Exit, Layer } from "effect"
 import * as HttpClientError from "effect/unstable/http/HttpClientError"
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
-import {
-  DestinationClient,
-  DestinationClientLive,
-} from "../src/destinationClient.ts"
-import { sendDelivery } from "../src/effectSender.ts"
+import { DestinationClientLive } from "../src/http/destination-live.ts"
+import { runDelivery } from "../src/delivery.ts"
 import { DeliveryTransportError } from "../src/errors.ts"
 import { makeDeliveryRequest } from "../src/model.ts"
+import { DestinationClient } from "../src/destination.ts"
 import {
   delivery,
   destination,
@@ -140,7 +138,7 @@ describe("C07-01 trustworthy outgoing HTTP adapter", () => {
   it("keeps status classification and retry outside the adapter", async () => {
     let calls = 0
     const outcome = await Effect.runPromise(
-      sendDelivery(delivery.id, event, destination).pipe(
+      runDelivery(delivery.id, event, destination).pipe(
         Effect.provide(
           destinationClientLayer((request) =>
             Effect.sync(() => {

@@ -31,14 +31,16 @@ import type {
 } from "./errors.ts"
 import { EventIntake } from "./eventIntake.ts"
 import {
-  DeliveryId,
-  DestinationId,
   EventAcceptance,
   EventSubmission,
-  IngestionKey,
   RelayEvent,
-  type DeliveryResult,
-} from "./model.ts"
+} from "./command.ts"
+import type { DeliveryResult } from "./delivery.ts"
+import {
+  DeliveryId,
+  DestinationId,
+  IngestionKey,
+} from "./identifiers.ts"
 import {
   DeadLetterStateProblem,
   DeliveryInternalProblem,
