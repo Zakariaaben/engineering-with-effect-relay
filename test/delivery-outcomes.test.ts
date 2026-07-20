@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Layer } from "effect"
-import { DestinationClientLive } from "../src/destinationClient.ts"
-import { sendDelivery } from "../src/effectSender.ts"
+import { DestinationClientLive } from "../src/http/destination-live.ts"
+import { runDelivery } from "../src/delivery.ts"
 import {
   classifyDeliveryResponse,
   classifyDeliveryStatus,
@@ -74,9 +74,9 @@ describe("C05-06 delivery outcomes", () => {
 
     const outcomes = await Effect.runPromise(
       Effect.all([
-        sendDelivery(delivery.id, event, destination),
-        sendDelivery(delivery.id, event, destination),
-        sendDelivery(nextDeliveryId, event, destination),
+        runDelivery(delivery.id, event, destination),
+        runDelivery(delivery.id, event, destination),
+        runDelivery(nextDeliveryId, event, destination),
       ]).pipe(Effect.provide(clientLayer)),
     )
 

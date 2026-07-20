@@ -14,7 +14,7 @@ import {
   type DeliverySupervisorHooks,
   makeDeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
-import { DestinationClient } from "../src/destinationClient.ts"
+import { DestinationClient } from "../src/destination.ts"
 import { DeliveryRepositoryMemory } from "../src/adapters/memoryPersistence.ts"
 import {
   Delivery,

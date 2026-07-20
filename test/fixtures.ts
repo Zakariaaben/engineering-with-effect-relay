@@ -7,7 +7,7 @@ import * as Http from "node:http"
 import {
   DestinationClient,
   type DestinationClientService,
-} from "../src/destinationClient.ts"
+} from "../src/destination.ts"
 import {
   AmountCents,
   Delivery,

@@ -17,27 +17,31 @@ import {
 } from "../errors.ts"
 import {
   Delivery,
-  ClaimGeneration,
   DeliveryClaim,
-  DeliveryRouteSnapshot,
   DeliveryResult,
   DeliveryState,
   DeliveryStatus,
-  type DeliveryId,
   type DeliveryAttemptRecord as DeliveryAttemptRecordValue,
+} from "../delivery.ts"
+import { DeliveryRouteSnapshot } from "../destination.ts"
+import type { RelayEvent } from "../command.ts"
+import {
+  ClaimGeneration,
+  type DeliveryId,
   type EventId,
   type IngestionKey,
-  type RelayEvent,
   type RequestFingerprint,
   type WorkerId,
-} from "../model.ts"
+} from "../identifiers.ts"
 import {
   DeliveryRepository,
+} from "../deliveryRepository.ts"
+import {
   IntakeDecision,
   type IntakeDecisionFields,
   type IntakeRecord,
   RelayIntakeStore,
-} from "../services.ts"
+} from "../intakeStore.ts"
 
 const makeMemoryRepository = (
   events: Map<EventId, RelayEvent>,

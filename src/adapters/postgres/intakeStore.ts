@@ -6,26 +6,28 @@ import {
 } from "../../errors.ts"
 import { deliveryToRow } from "./deliveryRepository.ts"
 import {
+  Delivery,
+  DeliveryClaim,
+  DeliveryState,
+} from "../../delivery.ts"
+import { RelayEvent } from "../../command.ts"
+import { DeliveryRouteSnapshot } from "../../destination.ts"
+import {
   AmountCents,
   ClaimGeneration,
   ConfigurationVersion,
-  Delivery,
-  DeliveryClaim,
   DeliveryId,
-  DeliveryRouteSnapshot,
-  DeliveryState,
   DestinationId,
   EventId,
   InvoiceId,
-  RelayEvent,
   RequestFingerprint,
   WorkerId,
-} from "../../model.ts"
+} from "../../identifiers.ts"
 import {
   IntakeDecision,
   type IntakeRecord,
   RelayIntakeStore,
-} from "../../services.ts"
+} from "../../intakeStore.ts"
 
 const intakeStoreError = (
   operation: "savePending" | "accept",

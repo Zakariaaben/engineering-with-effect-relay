@@ -7,10 +7,10 @@ import {
 } from "effect/unstable/cli"
 import { RelayAdminClient } from "./adminClient.ts"
 import {
-  DeliveryId,
   DeliveryStatus,
   type DeliveryStatus as DeliveryStatusValue,
-} from "./model.ts"
+} from "./delivery.ts"
+import { DeliveryId } from "./identifiers.ts"
 
 export type OutputMode = "human" | "json"
 

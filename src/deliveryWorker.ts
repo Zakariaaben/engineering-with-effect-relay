@@ -15,23 +15,27 @@ import {
   observeDeliveryAttempt,
   runDeliveryWithRetry,
 } from "./deliveryEngine.ts"
+import type { RelayEvent } from "./command.ts"
 import { DeliveryEvents } from "./deliveryEvents.ts"
 import { makeDeliveryMetrics } from "./deliveryMetrics.ts"
-import { DestinationClient } from "./destinationClient.ts"
+import {
+  DestinationClient,
+  type Destination,
+} from "./destination.ts"
 import type { ClaimLostError, DeliveryRepositoryError } from "./errors.ts"
-import { sendDelivery } from "./effectSender.ts"
 import {
   makeDeliveryAttemptRecord,
+  runDelivery,
   type AttemptTraceCorrelation,
   type DeliveryAttempt,
   type DeliveryClaim,
-  type DeliveryId,
   type DeliveryResult,
-  type Destination,
-  type DestinationId,
-  type RelayEvent,
-} from "./model.ts"
-import { DeliveryRepository } from "./services.ts"
+} from "./delivery.ts"
+import type {
+  DeliveryId,
+  DestinationId,
+} from "./identifiers.ts"
+import { DeliveryRepository } from "./deliveryRepository.ts"
 
 type DeliveryClaimFailure = ClaimLostError | DeliveryRepositoryError
 
@@ -59,7 +63,7 @@ export interface DeliveryWorkerHooks {
   ) => Effect.Effect<void>
 }
 
-export type WithDeliveryCapacity = <A, E, R>(
+export type WithAttemptCapacity = <A, E, R>(
   destinationId: DestinationId,
   task: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E, R>
@@ -71,7 +75,7 @@ export interface DeliveryWorkerOptions {
   readonly hooks: DeliveryWorkerHooks
   readonly metrics: ReturnType<typeof makeDeliveryMetrics>
   readonly repository: Context.Service.Shape<typeof DeliveryRepository>
-  readonly withCapacity: WithDeliveryCapacity
+  readonly withAttempt: WithAttemptCapacity
 }
 
 export const makeDeliveryWorker = (options: DeliveryWorkerOptions) => {
@@ -107,7 +111,7 @@ export const makeDeliveryWorker = (options: DeliveryWorkerOptions) => {
         destination.id,
         options.configuration.resilience,
         (ordinal, remaining) =>
-          options.withCapacity(
+          options.withAttempt(
             destination.id,
             observeDeliveryAttempt(
               ordinal,
@@ -116,7 +120,7 @@ export const makeDeliveryWorker = (options: DeliveryWorkerOptions) => {
                 options.configuration.resilience.attemptTimeout,
                 remaining,
               ),
-              sendDelivery(deliveryId, event, destination).pipe(
+              runDelivery(deliveryId, event, destination).pipe(
                 Effect.provideService(
                   DestinationClient,
                   options.destinationClient,

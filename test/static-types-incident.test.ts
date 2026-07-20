@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import type { DestinationClientService } from "../src/destinationClient.ts"
-import { sendDelivery } from "../src/effectSender.ts"
+import type { DestinationClientService } from "../src/destination.ts"
+import { runDelivery } from "../src/delivery.ts"
 import {
   delivery,
   destination,
@@ -27,7 +27,7 @@ describe("C02-01 static-type incident", () => {
     }
 
     const outcome = await Effect.runPromise(
-      sendDelivery(delivery.id, event, destination).pipe(
+      runDelivery(delivery.id, event, destination).pipe(
         provideDestinationClient(client),
       ),
     )

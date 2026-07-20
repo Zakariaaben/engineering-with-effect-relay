@@ -8,10 +8,12 @@ import {
   Schema,
 } from "effect"
 import {
-  ConfigurationVersion,
   Destination,
+} from "./destination.ts"
+import {
+  ConfigurationVersion,
   DestinationId,
-} from "./model.ts"
+} from "./identifiers.ts"
 
 export interface DeliveryConcurrency {
   readonly global: number

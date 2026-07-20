@@ -21,7 +21,7 @@ import {
   DeliverySupervisor,
   DeliverySupervisorLive,
 } from "../src/deliverySupervisor.ts"
-import { DestinationClient } from "../src/destinationClient.ts"
+import { DestinationClient } from "../src/destination.ts"
 import { ClaimLostError } from "../src/errors.ts"
 import { RelayPersistenceMemory } from "../src/adapters/memoryPersistence.ts"
 import {

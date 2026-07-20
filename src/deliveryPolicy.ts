@@ -2,7 +2,7 @@ import {
   DeliveryAttemptRecord,
   DeliveryResult,
   DeliveryState,
-} from "./model.ts"
+} from "./delivery.ts"
 
 /** The single domain truth table used by every persistence adapter. */
 export const deliveryStateFromResult = (

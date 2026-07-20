@@ -2,52 +2,52 @@ import { describe, expect, it } from "bun:test"
 import { Cause, Context, Effect, Exit, Layer } from "effect"
 import { reproducePartialAcquisitionLeak } from "./incidents/partialAcquisitionLeak.ts"
 
-class RepositoryConnection extends Context.Service<RepositoryConnection, {
+class ConnectionPool extends Context.Service<ConnectionPool, {
   readonly name: string
-}>()("C03-09/RepositoryConnection") {}
+}>()("Relay/M2/ConnectionPool") {}
 
-class DestinationConnection extends Context.Service<DestinationConnection, {
+class DestinationSession extends Context.Service<DestinationSession, {
   readonly name: string
-}>()("C03-09/DestinationConnection") {}
+}>()("Relay/M2/DestinationSession") {}
 
 describe("Relay M2 act gate", () => {
   it("reproduces a leak when the second manual acquisition fails", async () => {
     expect(await reproducePartialAcquisitionLeak()).toEqual({
       events: [
-        "repository:acquire",
-        "destination:acquire",
+        "pool:acquire",
+        "session:acquire",
         "startup:failure",
       ],
-      repositoryOpen: true,
+      poolOpen: true,
     })
   })
 
   it("releases an acquired Layer dependency when its consumer fails to build", async () => {
     const events: Array<string> = []
-    const RepositoryLive = Layer.effect(
-      RepositoryConnection,
+    const ConnectionPoolLive = Layer.effect(
+      ConnectionPool,
       Effect.acquireRelease(
         Effect.sync(() => {
-          events.push("repository:acquire")
-          return RepositoryConnection.of({ name: "relay-repository" })
+          events.push("pool:acquire")
+          return ConnectionPool.of({ name: "destination-pool" })
         }),
         () => Effect.sync(() => {
-          events.push("repository:release")
+          events.push("pool:release")
         }),
       ),
     )
-    const DestinationLive = Layer.effect(
-      DestinationConnection,
+    const DestinationSessionLive = Layer.effect(
+      DestinationSession,
       Effect.gen(function* () {
-        yield* RepositoryConnection
+        yield* ConnectionPool
         yield* Effect.sync(() => {
-          events.push("destination:acquire")
+          events.push("session:acquire")
         })
-        return yield* Effect.fail("destination unavailable" as const)
+        return yield* Effect.fail("session unavailable" as const)
       }),
     )
-    const graph = DestinationLive.pipe(
-      Layer.provideMerge(RepositoryLive),
+    const graph = DestinationSessionLive.pipe(
+      Layer.provide(ConnectionPoolLive),
     )
 
     const exit = await Effect.runPromiseExit(
@@ -60,9 +60,9 @@ describe("Relay M2 act gate", () => {
     }
     expect(Cause.hasFails(exit.cause)).toBe(true)
     expect(events).toEqual([
-      "repository:acquire",
-      "destination:acquire",
-      "repository:release",
+      "pool:acquire",
+      "session:acquire",
+      "pool:release",
     ])
   })
 })

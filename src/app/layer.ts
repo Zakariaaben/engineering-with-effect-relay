@@ -12,7 +12,7 @@ import {
   PostgresLive,
 } from "../adapters/postgres/deliveryRepository.ts"
 import { DeliverySupervisorLive } from "../deliverySupervisor.ts"
-import { DestinationClientLive } from "../destinationClient.ts"
+import { DestinationClientLive } from "../http/destination-live.ts"
 import { EventIntakeLive } from "../eventIntake.ts"
 import {
   DeliveryHttpRoutes,
@@ -30,7 +30,8 @@ import { RelayIntakeStoreSql } from "../adapters/postgres/intakeStore.ts"
 import { PostgresMigrationsLive } from "../adapters/postgres/migrations.ts"
 import { RelayReadiness, RelayReadinessLive } from "../readiness.ts"
 import { ReconcilerLive } from "../reconciler.ts"
-import { DeliveryRepository, RelayIntakeStore } from "../services.ts"
+import { DeliveryRepository } from "../deliveryRepository.ts"
+import { RelayIntakeStore } from "../intakeStore.ts"
 import { WorkerIdentity, WorkerIdentityLive } from "../workerIdentity.ts"
 
 export const RelayPersistenceLive = Layer.mergeAll(

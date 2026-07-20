@@ -6,7 +6,8 @@ import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup"
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware"
 import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity"
 import * as OpenApi from "effect/unstable/httpapi/OpenApi"
-import { DeliveryId, DeliveryStatus } from "./model.ts"
+import { DeliveryStatus } from "./delivery.ts"
+import { DeliveryId } from "./identifiers.ts"
 import { ReconciliationReport } from "./reconciler.ts"
 
 export class UnauthorizedProblem extends

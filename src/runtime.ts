@@ -19,10 +19,8 @@ import { EventIntake } from "./eventIntake.ts"
 import {
   DeliverySupervisor,
 } from "./deliverySupervisor.ts"
-import type {
-  DeliveryConcurrencyMetrics,
-  DeliveryLoadMetrics,
-} from "./deliveryAdmission.ts"
+import type { DeliveryLoadMetrics } from "./deliveryAdmission.ts"
+import type { DeliveryConcurrencyMetrics } from "./deliveryCapacity.ts"
 import {
   makeRelayHttpApplicationLayer,
   RelayPersistenceLive,
@@ -37,11 +35,15 @@ import {
 } from "./incidentAnalyst.ts"
 import type {
   DeliveryResult,
-  DeliveryId,
   DeliveryStatus,
+} from "./delivery.ts"
+import type {
   EventAcceptance,
+} from "./command.ts"
+import type {
+  DeliveryId,
   IngestionKey,
-} from "./model.ts"
+} from "./identifiers.ts"
 import { RelayReadiness, RelayReadinessLive } from "./readiness.ts"
 import {
   WorkerIdentity,

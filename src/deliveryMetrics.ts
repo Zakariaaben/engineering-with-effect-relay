@@ -2,7 +2,7 @@ import { Effect, Metric } from "effect"
 import type {
   DeadLetterReason,
   DeliveryAttempt,
-} from "./model.ts"
+} from "./delivery.ts"
 
 export interface DeliverySaturationSnapshot {
   readonly activeAttempts: number

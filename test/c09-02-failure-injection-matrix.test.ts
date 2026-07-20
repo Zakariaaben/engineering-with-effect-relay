@@ -39,7 +39,7 @@ import {
 import {
   DestinationClient,
   type DestinationClientService,
-} from "../src/destinationClient.ts"
+} from "../src/destination.ts"
 import {
   ClaimLostError,
   DeliveryOverloaded,

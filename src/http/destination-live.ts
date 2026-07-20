@@ -1,23 +1,11 @@
-import { Context, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import { DeliveryTransportError } from "./errors.ts"
-import type {
-  DeliveryRequest,
-  DeliveryResponseEvidence,
-} from "./model.ts"
-
-export class DestinationClient extends Context.Service<DestinationClient, {
-  readonly post: (
-    request: DeliveryRequest,
-  ) => Effect.Effect<
-    DeliveryResponseEvidence,
-    DeliveryTransportError
-  >
-}>()("Relay/DestinationClient") {}
-
-export type DestinationClientService =
-  Context.Service.Shape<typeof DestinationClient>
+import {
+  DestinationClient,
+  type DeliveryRequest,
+} from "../destination.ts"
+import { DeliveryTransportError } from "../errors.ts"
 
 export const DestinationClientLive = Layer.effect(
   DestinationClient,

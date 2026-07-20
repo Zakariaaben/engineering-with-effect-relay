@@ -1,6 +1,6 @@
 import { Effect } from "effect"
-import type { DestinationClientService } from "../../src/destinationClient.ts"
-import { deliverCandidate } from "../../src/workflow.ts"
+import type { DestinationClientService } from "../../src/destination.ts"
+import { deliverCandidate } from "../../src/delivery.ts"
 import {
   delivery,
   destination,

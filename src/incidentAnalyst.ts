@@ -10,9 +10,9 @@ import {
 import { AiError, LanguageModel } from "effect/unstable/ai"
 import type { DeliveryRepositoryError } from "./errors.ts"
 import {
-  DeliveryId,
   type DeliveryStatus,
-} from "./model.ts"
+} from "./delivery.ts"
+import { DeliveryId } from "./identifiers.ts"
 import { DeliveryOperations } from "./deliveryOperations.ts"
 
 const BoundedAnalysisText = Schema.String.check(
